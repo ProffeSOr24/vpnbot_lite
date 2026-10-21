@@ -166,6 +166,9 @@ def setup(service: Service) -> Router:
         text = (f"<b>{html.escape(u['name'])}</b>\n\n"
                 f"📲 <b>Подписка</b> (рекомендуется — ключи обновляются сами):\n<code>{html.escape(sub)}</code>\n\n"
                 + "\n\n".join(f"<code>{html.escape(link)}</code>" for link in service.links(u))
+                + (f"\n\nHysteria2 для Happ / v2RayTun / v2rayN (без insecure):\n"
+                   f"<code>{html.escape(service.hy2_link(u, insecure=False))}</code>"
+                   if db.get("hy_enabled") == "1" else "")
                 + "\n\nПриложения: Hiddify, v2RayTun, Happ (iOS/Android), v2rayN (Windows), Streisand (iOS).")
         await cb.message.answer_photo(BufferedInputFile(qr_png(sub), "qr.png"), caption="QR-код подписки")
         await cb.message.answer(text, disable_web_page_preview=True)

@@ -6,6 +6,7 @@ import hashlib
 import ipaddress
 import logging
 import random
+import re
 import secrets
 import socket
 import ssl
@@ -26,6 +27,9 @@ from .db import DB, wg_keypair
 log = logging.getLogger(__name__)
 
 DEFAULT_REALITY_SNI = "www.microsoft.com"
+# Hysteria2 uses a self-signed certificate. Most clients (hysteria, sing-box, Hiddify, Streisand...) need
+# insecure=1 to accept it, but Xray 26+ refuses `insecure` and accepts only a pinned certificate.
+XRAY_CLIENTS = re.compile(r"happ|v2raytun|v2rayn|xray", re.IGNORECASE)
 DEFAULT_HY_SNI = "www.bing.com"
 
 
@@ -200,18 +204,22 @@ class Service:
         return (f"vless://{user['uuid']}@{self._host_for_url()}:{config.XRAY_PORT}"
                 f"?{urlencode(params)}#{quote(user['name'] + ' Reality')}")
 
-    def hy2_link(self, user) -> str:
+    def hy2_link(self, user, insecure: bool = True) -> str:
+        """`pinSHA256`/`pcs` pin the self-signed certificate; `insecure=1` must be left out for Xray clients."""
         s = self.settings()
-        params = {"sni": s["hy_sni"], "insecure": "1", "pinSHA256": cert_pin(s["hy_cert"])}
+        pin = cert_pin(s["hy_cert"])
+        params = {"sni": s["hy_sni"], "pinSHA256": pin, "pcs": pin}
+        if insecure:
+            params["insecure"] = "1"
         if s.get("hy_obfs") == "1":
             params.update({"obfs": "salamander", "obfs-password": s["hy_obfs_password"]})
         return (f"hysteria2://{quote(user['name'])}:{quote(user['hy_pass'])}@{self._host_for_url()}:"
                 f"{config.HY2_PORT}/?{urlencode(params)}#{quote(user['name'] + ' Hysteria2')}")
 
-    def links(self, user) -> list[str]:
+    def links(self, user, user_agent: str = "") -> list[str]:
         links = [self.vless_link(user)]
         if self.db.get("hy_enabled") == "1":
-            links.append(self.hy2_link(user))
+            links.append(self.hy2_link(user, insecure=not XRAY_CLIENTS.search(user_agent)))
         return links
 
     def awg_conf(self, user) -> str:

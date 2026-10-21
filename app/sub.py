@@ -37,7 +37,7 @@ def make_app(service: Service) -> web.Application:
         user = service.db.user_by_token(request.match_info["token"])
         if not user:
             raise web.HTTPNotFound()
-        links = service.links(user) if user["enabled"] else []
+        links = service.links(user, request.headers.get("User-Agent", "")) if user["enabled"] else []
         sub_url = service.sub_url(user)
         if request.query.get("qr"):
             return web.Response(body=qr_png(sub_url), content_type="image/png")
