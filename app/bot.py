@@ -339,7 +339,7 @@ def setup(service: Service) -> Router:
         await state.clear()
         await apply(message)
         if len(created) == 1:
-            await message.answer(*user_card(db.user(created[0])))
+            await show(message, *user_card(db.user(created[0])))
         else:
             await users_list(message)
 
