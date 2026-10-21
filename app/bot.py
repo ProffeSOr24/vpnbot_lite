@@ -678,8 +678,8 @@ def setup(service: Service) -> Router:
     @router.callback_query(F.data == "logs")
     async def logs(cb: CallbackQuery) -> None:
         debug = db.get("debug_logs") == "1"
-        await show(cb, "Какие логи показать?\n\nПодробные логи Xray показывают каждое подключение — "
-                       "включите, попробуйте подключиться и откройте логи Xray.",
+        await show(cb, "Какие логи показать?\n\nПодробные логи Xray и MTProto показывают каждое подключение — "
+                       "включите, попробуйте подключиться и откройте нужные логи.",
                    kb([("Xray", "log:xray"), ("Hysteria2", "log:hysteria"), ("AmneziaWG", "log:amneziawg")],
                       [("MTProto", "log:mtproto")],
                       [(f"🔍 Подробные логи: {'вкл' if debug else 'выкл'}", "debuglogs")], BACK))

@@ -557,9 +557,13 @@ class MTProto(Core):
     def write_config(self, s: dict) -> bool:
         """Returns True when the config changed (mtg has to be restarted to pick it up)."""
         text = "\n".join([
+            # debug logs show every client and why a handshake was rejected
+            f'debug = {"true" if s.get("debug_logs") == "1" else "false"}',
             f'secret = "{s["mtproto_secret"]}"',
             f'bind-to = "0.0.0.0:{config.MTPROTO_PORT}"',
             'prefer-ip = "prefer-ipv4"',
+            # mtg rejects fake-TLS handshakes whose timestamp is off by more than this (default 3s)
+            'tolerate-time-skewness = "10s"',
             "",
             # non-Telegram clients (probes) are forwarded to the real HTTPS site of the domain in the secret
             "[domain-fronting]",
