@@ -469,7 +469,8 @@ def setup(service: Service) -> Router:
                 f"<b>Hysteria2</b>: {on('hy_enabled')}, обфускация Salamander: {on('hy_obfs')}\n"
                 f"<b>AmneziaWG</b>: {on('awg_enabled')}, подсеть {config.AWG_SUBNET}\n"
                 f"<b>Блокировка рекламы</b>: {on('block_ads')}")
-        markup = kb([("🌐 SNI Reality", "set:sni"), ("🔑 Новые ключи Reality", "set:rekey")],
+        markup = kb([("🌐 SNI Reality", "set:sni"), ("🩺 Проверить SNI", "set:check")],
+                    [("🔑 Новые ключи Reality", "set:rekey")],
                     [(f"Hysteria2: {on('hy_enabled')}", "set:hy"), (f"Обфускация: {on('hy_obfs')}", "set:obfs")],
                     [(f"AmneziaWG: {on('awg_enabled')}", "set:awg"), ("🔑 Новые ключи AWG", "set:awgkey")],
                     [(f"Блок рекламы: {on('block_ads')}", "set:ads"), ("📍 Адрес сервера", "set:host")],
@@ -529,9 +530,19 @@ def setup(service: Service) -> Router:
             await message.answer("Это не похоже на домен. /cancel — отмена.")
             return
         await state.clear()
+        check = await service.check_sni(domain)
+        if "❌" in check and "✅" not in check:
+            await message.answer(f"{html.escape(check)}\n\nSNI не изменён.")
+            return
         db.set("reality_sni", domain)
         await apply(message)
+        await message.answer(html.escape(check) + "\n\nКлиентам с подпиской достаточно обновить её.")
         await show(message, *settings_view())
+
+    @router.callback_query(F.data == "set:check")
+    async def check_sni(cb: CallbackQuery) -> None:
+        await cb.answer("Проверяю…")
+        await cb.message.answer(html.escape(await service.check_sni(db.get("reality_sni"))))
 
     @router.callback_query(F.data == "set:host")
     async def set_host(cb: CallbackQuery, state: FSMContext) -> None:
@@ -591,8 +602,17 @@ def setup(service: Service) -> Router:
     # ---------- logs ----------
     @router.callback_query(F.data == "logs")
     async def logs(cb: CallbackQuery) -> None:
-        await show(cb, "Какие логи показать?", kb([("Xray", "log:xray"), ("Hysteria2", "log:hysteria"),
-                                                ("AmneziaWG", "log:amneziawg")], BACK))
+        debug = db.get("debug_logs") == "1"
+        await show(cb, "Какие логи показать?\n\nПодробные логи Xray показывают каждое подключение — "
+                       "включите, попробуйте подключиться и откройте логи Xray.",
+                   kb([("Xray", "log:xray"), ("Hysteria2", "log:hysteria"), ("AmneziaWG", "log:amneziawg")],
+                      [(f"🔍 Подробные логи: {'вкл' if debug else 'выкл'}", "debuglogs")], BACK))
+
+    @router.callback_query(F.data == "debuglogs")
+    async def toggle_debug_logs(cb: CallbackQuery) -> None:
+        db.set("debug_logs", "0" if db.get("debug_logs") == "1" else "1")
+        await apply(cb)
+        await logs(cb)
 
     @router.callback_query(F.data.startswith("log:"))
     async def show_logs(cb: CallbackQuery) -> None:

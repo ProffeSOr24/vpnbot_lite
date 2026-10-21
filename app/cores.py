@@ -61,6 +61,7 @@ class Core:
     name = ""
     repo = ""
     version_re = r"(\d+\.\d+\.\d+)"
+    noise: re.Pattern | None = None  # log lines not worth keeping
 
     def __init__(self):
         self.proc: asyncio.subprocess.Process | None = None
@@ -157,7 +158,7 @@ class Core:
     async def _read_output(self, proc: asyncio.subprocess.Process) -> None:
         async for line in proc.stdout:
             text = ANSI_RE.sub("", line.decode(errors="replace")).rstrip()
-            if text:
+            if text and not (self.noise and self.noise.search(text)):
                 self.logs.append(text)
 
     async def _watchdog(self) -> None:
@@ -241,6 +242,7 @@ class Xray(Core):
     name = "xray"
     repo = "XTLS/Xray-core"
     version_re = r"Xray (\d+\.\d+\.\d+)"
+    noise = re.compile(r"proxy: (Xtls|CopyRawConn|XtlsFilterTls)|XtlsPadding|Unpadding")
 
     def args(self) -> list[str]:
         return [str(self.binary), "run", "-c", str(self.config_path)]
@@ -270,7 +272,9 @@ class Xray(Core):
     def write_config(self, users, s: dict) -> None:
         clients = [{"id": u["uuid"], "email": u["name"], "flow": "xtls-rprx-vision"} for u in users]
         cfg = {
-            "log": {"loglevel": "warning", "access": "none"},
+            # debug: every incoming connection and REALITY handshake error goes to the logs
+            "log": ({"loglevel": "info"} if s.get("debug_logs") == "1"
+                    else {"loglevel": "warning", "access": "none"}),
             "api": {"tag": "api", "listen": config.XRAY_API, "services": ["StatsService", "HandlerService"]},
             "stats": {},
             "policy": {

@@ -7,6 +7,8 @@ import ipaddress
 import logging
 import random
 import secrets
+import socket
+import ssl
 import time
 from urllib.parse import quote, urlencode
 
@@ -155,6 +157,36 @@ class Service:
         except ValueError:
             pass
         return self.host
+
+    async def check_sni(self, domain: str) -> str:
+        """Can the server reach the REALITY target over TLS 1.3? Reality connects to it for every client."""
+        lines = []
+        for family, label in ((socket.AF_INET, "IPv4"), (socket.AF_INET6, "IPv6")):
+            try:
+                infos = await asyncio.get_running_loop().getaddrinfo(domain, 443, family=family,
+                                                                     type=socket.SOCK_STREAM)
+            except socket.gaierror:
+                lines.append(f"{label}: нет адреса")
+                continue
+            ip = infos[0][4][0]
+            ctx = ssl.create_default_context()
+            started = time.monotonic()
+            try:
+                _, writer = await asyncio.wait_for(
+                    asyncio.open_connection(ip, 443, ssl=ctx, server_hostname=domain), 6)
+                version = writer.get_extra_info("ssl_object").version()
+                writer.close()
+                ms = (time.monotonic() - started) * 1000
+                mark = "✅" if version == "TLSv1.3" else "⚠️ нужен TLSv1.3,"
+                lines.append(f"{label}: {mark} {version}, {ms:.0f} мс")
+            except (OSError, asyncio.TimeoutError, ssl.SSLError) as e:
+                lines.append(f"{label}: ❌ {type(e).__name__} {e}".strip())
+        ok = any("✅" in line for line in lines)
+        broken_v6 = any(line.startswith("IPv6: ❌") for line in lines)
+        verdict = "годится" if ok else "НЕ годится — выберите другой сайт"
+        if ok and broken_v6:
+            verdict += " (но IPv6 на сервере не работает — если VLESS не подключается, выберите сайт без IPv6)"
+        return f"Проверка {domain}: {verdict}\n" + "\n".join(lines)
 
     # --- links ---
     def sub_url(self, user) -> str:
