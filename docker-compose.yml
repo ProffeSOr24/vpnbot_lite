@@ -25,3 +25,20 @@ services:
       options:
         max-size: 5m
         max-file: "3"
+
+  # HTTPS for subscription links, enabled by `./vpn.sh https` (COMPOSE_PROFILES=https in .env)
+  caddy:
+    image: caddy:2.10-alpine
+    container_name: vpnbot-lite-caddy
+    profiles: ["https"]
+    restart: unless-stopped
+    network_mode: host
+    env_file: .env
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./data/caddy:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: 1m
+        max-file: "3"

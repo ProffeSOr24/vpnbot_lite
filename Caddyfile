@@ -1,0 +1,6 @@
+# HTTPS for subscriptions (Happ and other apps refuse plain http).
+# SUB_DOMAIN is <ip-with-dashes>.nip.io: a free name that points to the server IP, no domain to buy.
+# Let's Encrypt validates it over port 80, the certificate is renewed automatically.
+{$SUB_DOMAIN}:{$SUB_HTTPS_PORT:2443} {
+	reverse_proxy 127.0.0.1:{$SUB_PORT:2096}
+}

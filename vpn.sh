@@ -2,6 +2,7 @@
 # VPN Bot Lite — установка и обслуживание.
 #   ./vpn.sh install [BOT_TOKEN] [ADMIN_ID]   установка (Docker, настройки ядра, автообновление)
 #   ./vpn.sh update                           обновить бота из git и пересобрать
+#   ./vpn.sh https [ПОРТ]                     подписки по https (бесплатный адрес IP.nip.io + Let's Encrypt)
 #   ./vpn.sh restart | stop | status | logs
 set -euo pipefail
 
@@ -118,6 +119,43 @@ cmd_install() {
     log "Готово! Откройте бота в Telegram и нажмите /start"
 }
 
+cmd_https() {
+    need_root "$@"
+    local ip domain port url
+    ip="$(env_get SERVER_HOST)"
+    [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || ip="$(curl -4 -fsS --max-time 10 https://api.ipify.org)"
+    domain="$(echo "$ip" | tr . -).nip.io"  # бесплатное имя, которое указывает на этот IP
+    port="${1:-$(env_port SUB_HTTPS_PORT 2443)}"
+    url="https://$domain"
+    [ "$port" = 443 ] || url="$url:$port"
+    if ss -ltnH "sport = :80" 2>/dev/null | grep -q . && ! docker ps --format '{{.Names}}' | grep -q '^vpnbot-lite-caddy$'; then
+        echo "⚠️  Порт 80 занят — Let's Encrypt проверяет адрес через него, сертификат не выпустится:"
+        ss -ltnpH "sport = :80" || true
+        die "освободите порт 80 (например, остановите старый vpnbot: cd /root/vpnbot && make d) и повторите"
+    fi
+    env_set SUB_DOMAIN "$domain"
+    env_set SUB_HTTPS_PORT "$port"
+    env_set SUB_URL "$url"
+    env_set COMPOSE_PROFILES https
+    if command -v ufw >/dev/null && ufw status | grep -q "Status: active"; then
+        ufw allow 80/tcp
+        ufw allow "$port/tcp"
+    fi
+    log "Включаю HTTPS для подписок: $url"
+    docker compose up -d --force-recreate
+    log "Получаю сертификат (до 2 минут)…"
+    for _ in $(seq 24); do
+        if curl -fsS --max-time 5 "$url/health" >/dev/null 2>&1; then
+            log "Готово! Подписки теперь открываются по $url/sub/…"
+            log "Новые ссылки — в боте: Пользователи → пользователь → Ключи и QR"
+            return
+        fi
+        sleep 5
+    done
+    echo "Сертификат пока не получен. Проверьте, открыт ли порт 80 у хостера, и посмотрите логи:"
+    echo "  docker compose logs caddy --tail 30"
+}
+
 cmd_update() {
     rm -f data/update.request
     if [ -d .git ] || git rev-parse --git-dir >/dev/null 2>&1; then
@@ -139,9 +177,10 @@ cmd_update() {
 case "${1:-}" in
     install) shift; cmd_install "$@" ;;
     update) cmd_update ;;
+    https) shift; cmd_https "$@" ;;
     restart) docker compose restart ;;
     stop) docker compose down ;;
     status) docker compose ps ;;
     logs) docker compose logs -f --tail=200 ;;
-    *) sed -n '2,5p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+    *) sed -n '2,6p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac
