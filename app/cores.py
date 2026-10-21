@@ -539,7 +539,8 @@ class MTProto(Core):
     name = "telemt"
     repo = "telemt/telemt"
     version_re = r"telemt (\d+\.\d+\.\d+)"
-    noise = re.compile(r" TRACE |ME RTT sample|mio::poll|STUN probe failed")
+    # keep client connections and problems; drop the chatter about telemt's own links to Telegram
+    noise = re.compile(r" TRACE |ME RTT sample|mio::poll|STUN |(DEBUG|INFO) telemt::(transport::middle_proxy|network)")
 
     @property
     def workdir(self) -> Path:
