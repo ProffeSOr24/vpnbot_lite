@@ -539,6 +539,7 @@ class MTProto(Core):
     name = "telemt"
     repo = "telemt/telemt"
     version_re = r"telemt (\d+\.\d+\.\d+)"
+    noise = re.compile(r" TRACE |ME RTT sample|mio::poll|STUN probe failed")
 
     @property
     def workdir(self) -> Path:
@@ -576,7 +577,8 @@ class MTProto(Core):
         domain = bytes.fromhex(secret[34:]).decode()
         text = "\n".join([
             "[general]",
-            f'log_level = "{"debug" if s.get("debug_logs") == "1" else "normal"}"',
+            f'log_level = "{"verbose" if s.get("debug_logs") == "1" else "normal"}"',
+            "disable_colors = true",
             "[general.modes]",
             "classic = false",
             "secure = false",
