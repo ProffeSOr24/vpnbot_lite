@@ -79,6 +79,8 @@ async def main() -> None:
         await notify(bot, f"🚀 VPN Bot Lite v{config.VERSION} запущен. /menu"
                           + (f"\n⚠️ {error}" if error else ""))
 
+    # a webhook left by another bot on the same token (e.g. the old vpnbot) blocks polling
+    await bot.delete_webhook(drop_pending_updates=False)
     task = asyncio.create_task(background(service, bot))
     try:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
