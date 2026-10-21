@@ -239,7 +239,9 @@ class Service:
         return links
 
     def mtproto_domain(self) -> str:
-        """The fake-TLS name: the server's own <ip>.nip.io, so the name matches the IP it is sent to."""
+        """The fake-TLS name: chosen in the bot, else the server's own <ip>.nip.io (the name matches the IP)."""
+        if self.db.get("mtproto_domain"):
+            return self.db.get("mtproto_domain")
         try:
             ip = ipaddress.ip_address(self.host)
             if ip.version == 4:

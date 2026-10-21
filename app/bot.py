@@ -34,6 +34,7 @@ class Input(StatesGroup):
     limit = State()
     reality_sni = State()
     host = State()
+    mtproto_domain = State()
 
 
 def kb(*rows: list[tuple[str, str]]) -> InlineKeyboardMarkup:
@@ -481,6 +482,7 @@ def setup(service: Service) -> Router:
                 f"Маскировка: <code>{html.escape(bytes.fromhex(db.get('mtproto_secret')[34:]).decode())}</code>. "
                 "Одна ссылка для всех — можно пересылать друзьям.")
         return text, kb([("🔳 QR", "mtp:qr"), ("🔄 Новая ссылка", "mtp:new")],
+                        [("🌐 Сайт маскировки", "mtp:domain")],
                         [("⏸ Выключить", "mtp:toggle")], BACK)
 
     @router.callback_query(F.data == "mtp")
@@ -498,6 +500,35 @@ def setup(service: Service) -> Router:
         await cb.message.answer_photo(BufferedInputFile(qr_png(service.mtproto_link()), "proxy.png"),
                                       caption="QR прокси Telegram — отсканируйте камерой телефона")
         await cb.answer()
+
+    @router.callback_query(F.data == "mtp:domain")
+    async def mtproto_domain(cb: CallbackQuery, state: FSMContext) -> None:
+        await state.set_state(Input.mtproto_domain)
+        await show(cb, "Под какой сайт маскировать прокси? Отправьте домен (сайт с TLS 1.3), например "
+                       "<code>petrovich.ru</code>, <code>ya.ru</code>, <code>vk.com</code>.\n"
+                       "«auto» — собственный адрес сервера (IP.nip.io).\n\n"
+                       "Ссылка на прокси изменится — старую придётся заменить.", kb([("Отмена", "mtp")]))
+
+    @router.message(Input.mtproto_domain, F.text)
+    async def mtproto_domain_input(message: Message, state: FSMContext) -> None:
+        domain = message.text.strip().lower()
+        if domain == "auto":
+            await state.clear()
+            db.conn.execute("DELETE FROM settings WHERE key='mtproto_domain'")
+        else:
+            if not re.fullmatch(r"[a-z0-9.-]+\.[a-z]{2,}", domain):
+                await message.answer("Это не похоже на домен. /cancel — отмена.")
+                return
+            await state.clear()
+            check = await service.check_sni(domain)
+            await message.answer(html.escape(check))
+            if "✅" not in check:
+                await message.answer("Сайт маскировки не изменён.")
+                return
+            db.set("mtproto_domain", domain)
+        service.regenerate_mtproto()
+        await apply(message)
+        await show(message, *mtproto_view())
 
     @router.callback_query(F.data == "mtp:new")
     async def mtproto_new(cb: CallbackQuery) -> None:
