@@ -395,7 +395,7 @@ def setup(service: Service) -> Router:
         await cb.answer("Проверяю…")
         rows, lines = [], ["<b>Обновления</b>\n"]
         async with aiohttp.ClientSession() as session:
-            for core in (service.xray, service.hysteria):
+            for core in (service.xray, service.hysteria, service.mtproto):
                 current = await core.version()
                 try:
                     tag = await latest_tag(session, core.repo)
@@ -422,7 +422,7 @@ def setup(service: Service) -> Router:
 
     def core_by_name(name: str):
         return {"xray": service.xray, "hysteria": service.hysteria, "amneziawg": service.awg,
-                "mtproto": service.mtproto}[name]
+                "mtproto": service.mtproto, "telemt": service.mtproto}[name]
 
     @router.callback_query(F.data.startswith("upd:"))
     async def update_core(cb: CallbackQuery) -> None:
@@ -480,7 +480,7 @@ def setup(service: Service) -> Router:
                 f"Секрет: <code>{db.get('mtproto_secret')}</code>\n\n"
                 f"Маскировка: <code>{html.escape(bytes.fromhex(db.get('mtproto_secret')[34:]).decode())}</code>. "
                 "Одна ссылка для всех — можно пересылать друзьям.")
-        return text, kb([("🔳 QR", "mtp:qr"), ("🩺 Проверка", "mtp:doctor"), ("🔄 Новая ссылка", "mtp:new")],
+        return text, kb([("🔳 QR", "mtp:qr"), ("🔄 Новая ссылка", "mtp:new")],
                         [("⏸ Выключить", "mtp:toggle")], BACK)
 
     @router.callback_query(F.data == "mtp")
@@ -498,22 +498,6 @@ def setup(service: Service) -> Router:
         await cb.message.answer_photo(BufferedInputFile(qr_png(service.mtproto_link()), "proxy.png"),
                                       caption="QR прокси Telegram — отсканируйте камерой телефона")
         await cb.answer()
-
-    @router.callback_query(F.data == "mtp:doctor")
-    async def mtproto_doctor(cb: CallbackQuery) -> None:
-        await cb.answer("Проверяю, до минуты…")
-        proc = await asyncio.create_subprocess_exec(
-            str(service.mtproto.binary), "doctor", str(service.mtproto.config_path),
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-        try:
-            out, _ = await asyncio.wait_for(proc.communicate(), 90)
-        except asyncio.TimeoutError:
-            proc.kill()
-            out = b"timeout"
-        # IPv6 lines are noise on servers without IPv6
-        lines = [ln for ln in out.decode(errors="replace").splitlines() if "address family not supported" not in ln]
-        await cb.message.answer("<b>Проверка прокси</b> (✅ — в порядке)\n<pre>"
-                                f"{html.escape(chr(10).join(lines)[-3500:])}</pre>")
 
     @router.callback_query(F.data == "mtp:new")
     async def mtproto_new(cb: CallbackQuery) -> None:

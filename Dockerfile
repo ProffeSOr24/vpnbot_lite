@@ -1,12 +1,9 @@
-# AmneziaWG and mtg (MTProto proxy) are built from source; they are updated together with the bot.
+# AmneziaWG is built from source (no prebuilt Linux binaries); it is updated together with the bot.
 FROM golang:1.26-bookworm AS awg
 RUN git clone --depth 1 https://github.com/amnezia-vpn/amneziawg-go.git /src/go \
     && cd /src/go && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/amneziawg-go . \
     && git clone --depth 1 https://github.com/amnezia-vpn/amneziawg-tools.git /src/tools \
     && make -C /src/tools/src -j"$(nproc)" && cp /src/tools/src/wg /out/awg
-RUN TAG="$(git ls-remote --tags --sort=-v:refname https://github.com/9seconds/mtg.git 'v2*' | head -1 | sed 's#.*refs/tags/##')" \
-    && git clone --depth 1 --branch "$TAG" https://github.com/9seconds/mtg.git /src/mtg \
-    && cd /src/mtg && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$TAG" -o /out/mtg .
 
 FROM python:3.12-slim-bookworm
 
@@ -28,6 +25,13 @@ RUN set -eux; \
     curl -fsSL -o /opt/bin/hysteria "https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-${HARCH}"; \
     chmod +x /opt/bin/xray /opt/bin/hysteria; \
     /opt/bin/xray version; /opt/bin/hysteria version
+
+# telemt (MTProto proxy for Telegram): static release build; later updates are installed from the bot.
+RUN set -eux; \
+    case "$(uname -m)" in x86_64) TARCH=x86_64 ;; aarch64) TARCH=aarch64 ;; esac; \
+    curl -fsSL "https://github.com/telemt/telemt/releases/latest/download/telemt-${TARCH}-linux-musl.tar.gz" \
+        | tar xz -C /opt/bin telemt; \
+    /opt/bin/telemt --version
 
 COPY --from=awg /out/ /opt/bin/
 

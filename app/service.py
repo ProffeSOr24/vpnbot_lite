@@ -287,7 +287,7 @@ class Service:
                 if not s.get("mtproto_secret"):
                     self.regenerate_mtproto()
                     s = self.settings()
-                if self.mtproto.write_config(s) or not self.mtproto.running:
+                if self.mtproto.write_config(s, self.host) or not self.mtproto.running:
                     await self.mtproto.restart()
             else:
                 await self.mtproto.stop()
