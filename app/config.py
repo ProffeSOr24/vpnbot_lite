@@ -17,6 +17,7 @@ BUILTIN_BIN_DIR = Path(os.environ.get("BUILTIN_BIN_DIR", "/opt/bin"))  # baked i
 SERVER_HOST = os.environ.get("SERVER_HOST", "").strip()
 XRAY_PORT = _int("XRAY_PORT", 443)
 HY2_PORT = _int("HY2_PORT", 443)
+XHTTP_PORT = _int("XHTTP_PORT", 8443)  # VLESS XHTTP + Reality; 0 disables
 SUB_PORT = _int("SUB_PORT", 2096)
 AWG_PORT = _int("AWG_PORT", 51820)
 AWG_IFACE = "awg0"

@@ -99,7 +99,8 @@ class Service:
             db.set("hy_cert", cert)
             db.set("hy_key", key)
         for k, v in (("hy_stats_secret", secrets.token_hex(16)), ("hy_obfs_password", secrets.token_urlsafe(16)),
-                     ("hy_obfs", "0"), ("block_ads", "0"), ("hy_enabled", "1"), ("awg_enabled", "1")):
+                     ("hy_obfs", "0"), ("block_ads", "0"), ("hy_enabled", "1"), ("awg_enabled", "1"),
+                     ("reality_nosni", "1"), ("xhttp_enabled", "1"), ("xhttp_path", "/" + secrets.token_hex(6))):
             if db.get(k) is None:
                 db.set(k, v)
         if not db.get("awg_private"):
@@ -197,12 +198,23 @@ class Service:
         base = config.SUB_URL or f"http://{self._host_for_url()}:{config.SUB_PORT}"
         return f"{base}/sub/{user['token']}"
 
+    def _reality_params(self, s: dict) -> dict:
+        # without SNI the client sends no server name at all (like a direct connection to an IP)
+        sni = "" if s.get("reality_nosni") == "1" else s["reality_sni"]
+        return {"security": "reality", "encryption": "none", "pbk": s["reality_public"], "sid": s["reality_sid"],
+                "sni": sni, "fp": "chrome"}
+
     def vless_link(self, user) -> str:
         s = self.settings()
-        params = {"type": "tcp", "security": "reality", "encryption": "none", "flow": "xtls-rprx-vision",
-                  "pbk": s["reality_public"], "sid": s["reality_sid"], "sni": s["reality_sni"], "fp": "chrome"}
+        params = {"type": "tcp", "flow": "xtls-rprx-vision", **self._reality_params(s)}
         return (f"vless://{user['uuid']}@{self._host_for_url()}:{config.XRAY_PORT}"
                 f"?{urlencode(params)}#{quote(user['name'] + ' Reality')}")
+
+    def xhttp_link(self, user) -> str:
+        s = self.settings()
+        params = {"type": "xhttp", "path": s["xhttp_path"], "mode": "packet-up", **self._reality_params(s)}
+        return (f"vless://{user['uuid']}@{self._host_for_url()}:{config.XHTTP_PORT}"
+                f"?{urlencode(params)}#{quote(user['name'] + ' XHTTP')}")
 
     def hy2_link(self, user, insecure: bool = True) -> str:
         """`pinSHA256`/`pcs` pin the self-signed certificate; `insecure=1` must be left out for Xray clients."""
@@ -218,6 +230,8 @@ class Service:
 
     def links(self, user, user_agent: str = "") -> list[str]:
         links = [self.vless_link(user)]
+        if config.XHTTP_PORT and self.db.get("xhttp_enabled") == "1":
+            links.append(self.xhttp_link(user))
         if self.db.get("hy_enabled") == "1":
             links.append(self.hy2_link(user, insecure=not XRAY_CLIENTS.search(user_agent)))
         return links

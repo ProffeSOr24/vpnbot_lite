@@ -465,14 +465,19 @@ def setup(service: Service) -> Router:
         on = lambda key: "вкл" if s.get(key) == "1" else "выкл"  # noqa: E731
         text = (f"<b>Настройки</b>\n\n"
                 f"Адрес сервера: <code>{html.escape(service.host)}</code>\n"
-                f"Порты: Reality {config.XRAY_PORT}/tcp, Hysteria2 {config.HY2_PORT}/udp, "
+                f"Порты: Reality {config.XRAY_PORT}/tcp, XHTTP {config.XHTTP_PORT or '—'}/tcp, "
+                f"Hysteria2 {config.HY2_PORT}/udp, "
                 f"AmneziaWG {config.AWG_PORT}/udp, подписка {config.SUB_PORT}/tcp\n\n"
-                f"<b>VLESS Reality</b>\nSNI (маскировка): <code>{html.escape(s['reality_sni'])}</code>\n"
+                f"<b>VLESS Reality</b>\nSNI (маскировка): <code>{html.escape(s['reality_sni'])}</code>, "
+                f"передавать SNI в ссылках: {'нет' if s.get('reality_nosni') == '1' else 'да'}\n"
+                f"XHTTP: {on('xhttp_enabled') if config.XHTTP_PORT else 'выкл (XHTTP_PORT=0)'}\n"
                 f"Public key: <code>{s['reality_public']}</code>\nShort ID: <code>{s['reality_sid']}</code>\n\n"
                 f"<b>Hysteria2</b>: {on('hy_enabled')}, обфускация Salamander: {on('hy_obfs')}\n"
                 f"<b>AmneziaWG</b>: {on('awg_enabled')}, подсеть {config.AWG_SUBNET}\n"
                 f"<b>Блокировка рекламы</b>: {on('block_ads')}")
         markup = kb([("🌐 SNI Reality", "set:sni"), ("🩺 Проверить SNI", "set:check")],
+                    [(f"SNI в ссылках: {'нет' if s.get('reality_nosni') == '1' else 'да'}", "set:nosni"),
+                     (f"XHTTP: {on('xhttp_enabled')}", "set:xhttp")],
                     [("🔑 Новые ключи Reality", "set:rekey")],
                     [(f"Hysteria2: {on('hy_enabled')}", "set:hy"), (f"Обфускация: {on('hy_obfs')}", "set:obfs")],
                     [(f"AmneziaWG: {on('awg_enabled')}", "set:awg"), ("🔑 Новые ключи AWG", "set:awgkey")],
@@ -485,14 +490,14 @@ def setup(service: Service) -> Router:
         await state.clear()
         await show(cb, *settings_view())
 
-    @router.callback_query(F.data.in_({"set:hy", "set:obfs", "set:ads", "set:awg"}))
+    @router.callback_query(F.data.in_({"set:hy", "set:obfs", "set:ads", "set:awg", "set:nosni", "set:xhttp"}))
     async def toggle_setting(cb: CallbackQuery) -> None:
         key = {"set:hy": "hy_enabled", "set:obfs": "hy_obfs", "set:ads": "block_ads",
-               "set:awg": "awg_enabled"}[cb.data]
+               "set:awg": "awg_enabled", "set:nosni": "reality_nosni", "set:xhttp": "xhttp_enabled"}[cb.data]
         db.set(key, "0" if db.get(key) == "1" else "1")
         await apply(cb)
         await show(cb, *settings_view())
-        if key in ("hy_enabled", "hy_obfs"):
+        if key in ("hy_enabled", "hy_obfs", "reality_nosni", "xhttp_enabled"):
             await cb.message.answer("ℹ️ Ссылки изменились — клиентам с подпиской достаточно обновить её.")
 
     @router.callback_query(F.data == "set:rekey")

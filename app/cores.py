@@ -271,6 +271,16 @@ class Xray(Core):
 
     def write_config(self, users, s: dict) -> None:
         clients = [{"id": u["uuid"], "email": u["name"], "flow": "xtls-rprx-vision"} for u in users]
+        reality = {
+            "show": False,
+            "dest": f"{s['reality_sni']}:443",
+            "xver": 0,
+            # "" accepts clients that send no SNI: DPI can't flag a borrowed name that isn't there
+            "serverNames": ["", s["reality_sni"]],
+            "privateKey": s["reality_private"],
+            "shortIds": [s["reality_sid"]],
+        }
+        sniffing = {"enabled": True, "destOverride": ["http", "tls", "quic"], "routeOnly": True}
         cfg = {
             # debug: every incoming connection and REALITY handshake error goes to the logs
             "log": ({"loglevel": "info"} if s.get("debug_logs") == "1"
@@ -287,19 +297,8 @@ class Xray(Core):
                 "port": config.XRAY_PORT,
                 "protocol": "vless",
                 "settings": {"clients": clients, "decryption": "none"},
-                "streamSettings": {
-                    "network": "tcp",
-                    "security": "reality",
-                    "realitySettings": {
-                        "show": False,
-                        "dest": f"{s['reality_sni']}:443",
-                        "xver": 0,
-                        "serverNames": [s["reality_sni"]],
-                        "privateKey": s["reality_private"],
-                        "shortIds": [s["reality_sid"]],
-                    },
-                },
-                "sniffing": {"enabled": True, "destOverride": ["http", "tls", "quic"], "routeOnly": True},
+                "streamSettings": {"network": "tcp", "security": "reality", "realitySettings": reality},
+                "sniffing": sniffing,
             }],
             "outbounds": [
                 {"tag": "direct", "protocol": "freedom"},
@@ -313,6 +312,19 @@ class Xray(Core):
                 ],
             },
         }
+        if config.XHTTP_PORT and s.get("xhttp_enabled") == "1":
+            # many short HTTP requests instead of one long TLS stream: survives "freeze after N KB" throttling
+            cfg["inbounds"].append({
+                "tag": "vless-xhttp",
+                "listen": "0.0.0.0",
+                "port": config.XHTTP_PORT,
+                "protocol": "vless",
+                "settings": {"clients": [{"id": u["uuid"], "email": u["name"]} for u in users],
+                             "decryption": "none"},
+                "streamSettings": {"network": "xhttp", "xhttpSettings": {"path": s["xhttp_path"], "mode": "auto"},
+                                   "security": "reality", "realitySettings": reality},
+                "sniffing": sniffing,
+            })
         if s.get("block_ads") == "1":
             cfg["routing"]["rules"].append(
                 {"type": "field", "domain": ["geosite:category-ads-all"], "outboundTag": "block"})

@@ -13,6 +13,7 @@ log() { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31mОшибка:\033[0m %s\n' "$*" >&2; exit 1; }
 need_root() { [ "$(id -u)" -eq 0 ] || die "запустите от root (sudo $0 $*)"; }
 env_get() { grep -E "^$1=" .env 2>/dev/null | tail -1 | cut -d= -f2- || true; }
+env_port() { local v; v="$(env_get "$1")"; echo "${v:-$2}"; }  # env_port VAR default
 env_set() {
     if grep -qE "^$1=" .env; then sed -i "s|^$1=.*|$1=$2|" .env; else echo "$1=$2" >> .env; fi
 }
@@ -45,10 +46,11 @@ EOF
 open_firewall() {
     command -v ufw >/dev/null && ufw status | grep -q "Status: active" || return 0
     log "Открываю порты в ufw"
-    ufw allow "$(env_get XRAY_PORT)/tcp"
-    ufw allow "$(env_get HY2_PORT)/udp"
-    ufw allow "$(env_get AWG_PORT)/udp"
-    ufw allow "$(env_get SUB_PORT)/tcp"
+    ufw allow "$(env_port XRAY_PORT 443)/tcp"
+    [ "$(env_port XHTTP_PORT 8443)" = 0 ] || ufw allow "$(env_port XHTTP_PORT 8443)/tcp"
+    ufw allow "$(env_port HY2_PORT 443)/udp"
+    ufw allow "$(env_port AWG_PORT 51820)/udp"
+    ufw allow "$(env_port SUB_PORT 2096)/tcp"
 }
 
 version_url() {  # raw-ссылка на VERSION в GitHub, чтобы бот видел новые версии
@@ -87,7 +89,8 @@ EOF
 
 check_ports() {
     local port
-    for port in "$(env_get XRAY_PORT)" "$(env_get SUB_PORT)"; do
+    for port in "$(env_port XRAY_PORT 443)" "$(env_port XHTTP_PORT 8443)" "$(env_port SUB_PORT 2096)"; do
+        [ "$port" = 0 ] && continue
         if ss -ltnH "sport = :$port" 2>/dev/null | grep -q . && ! docker ps --format '{{.Names}}' | grep -q '^vpnbot-lite$'; then
             echo "⚠️  Порт $port/tcp уже занят другим процессом:"; ss -ltnpH "sport = :$port" || true
             echo "   Освободите его или поменяйте порт в .env"
