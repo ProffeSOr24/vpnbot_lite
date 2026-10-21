@@ -86,7 +86,8 @@ def setup(service: Service) -> Router:
     def menu_markup() -> InlineKeyboardMarkup:
         return kb([("👥 Пользователи", "users"), ("📊 Сервер", "server")],
                   [("⬆️ Обновления", "updates"), ("⚙️ Настройки", "settings")],
-                  [("💾 Бэкап", "backup"), ("📜 Логи", "logs")])
+                  [("📨 Прокси Telegram", "mtp"), ("💾 Бэкап", "backup")],
+                  [("📜 Логи", "logs")])
 
     def menu_text() -> str:
         users = db.users()
@@ -95,7 +96,8 @@ def setup(service: Service) -> Router:
                 f"Сервер: <code>{html.escape(service.host)}</code>\n"
                 f"Пользователи: {active} активных из {len(users)}\n"
                 f"Xray: {dot(service.xray)}   "
-                f"Hysteria2: {dot(service.hysteria)}   AmneziaWG: {dot(service.awg)}")
+                f"Hysteria2: {dot(service.hysteria)}   AmneziaWG: {dot(service.awg)}   "
+                f"MTProto: {dot(service.mtproto)}")
 
     @router.message(CommandStart())
     @router.message(Command("menu"))
@@ -367,7 +369,8 @@ def setup(service: Service) -> Router:
                 f"Диск: {fmt_bytes(disk.used)} / {fmt_bytes(disk.total)} ({disk.percent:.0f}%)\n"
                 f"Сеть с загрузки ОС: ↑{fmt_bytes(net.bytes_sent)} ↓{fmt_bytes(net.bytes_recv)}\n\n"
                 f"{core_line(service.xray, xv)}\n{core_line(service.hysteria, hv)}\n"
-                f"{core_line(service.awg, await service.awg.version())}\n\n"
+                f"{core_line(service.awg, await service.awg.version())}\n"
+                f"{core_line(service.mtproto, await service.mtproto.version())}\n\n"
                 f"Трафик пользователей (всего): {fmt_bytes(total)}")
         await show(cb, text, kb([("🔄 Обновить", "server"), ("♻️ Перезапуск ядер", "restart")], BACK))
 
@@ -418,7 +421,8 @@ def setup(service: Service) -> Router:
         await show(cb, "\n".join(lines), kb(*rows))
 
     def core_by_name(name: str):
-        return {"xray": service.xray, "hysteria": service.hysteria, "amneziawg": service.awg}[name]
+        return {"xray": service.xray, "hysteria": service.hysteria, "amneziawg": service.awg,
+                "mtproto": service.mtproto}[name]
 
     @router.callback_query(F.data.startswith("upd:"))
     async def update_core(cb: CallbackQuery) -> None:
@@ -458,6 +462,69 @@ def setup(service: Service) -> Router:
             "⏳ Запрос на обновление отправлен. Сервер скачает новую версию и перезапустит бота "
             "(1–3 минуты), после чего придёт сообщение.\n\n"
             "Если ничего не произошло — выполните на сервере: <code>./vpn.sh update</code>")
+
+    # ---------- telegram proxy ----------
+    def mtproto_view() -> tuple[str, InlineKeyboardMarkup]:
+        if not config.MTPROTO_PORT:
+            return "Прокси Telegram выключен в .env (MTPROTO_PORT=0).", kb(BACK)
+        enabled = db.get("mtproto_enabled") == "1"
+        if not enabled:
+            return ("📨 <b>Прокси Telegram (MTProto)</b>: выключен",
+                    kb([("▶️ Включить", "mtp:toggle")], BACK))
+        link = service.mtproto_link()
+        text = (f"📨 <b>Прокси Telegram (MTProto)</b> {dot(service.mtproto)}\n\n"
+                f"Нажмите на ссылку на устройстве с Telegram — он предложит подключить прокси:\n"
+                f"{html.escape(link)}\n\n"
+                f"Вручную (Настройки → Данные и память → Прокси → Добавить → MTProto):\n"
+                f"Сервер: <code>{html.escape(service.host)}</code>\nПорт: <code>{config.MTPROTO_PORT}</code>\n"
+                f"Секрет: <code>{db.get('mtproto_secret')}</code>\n\n"
+                f"Маскировка: <code>{html.escape(bytes.fromhex(db.get('mtproto_secret')[34:]).decode())}</code>. "
+                "Одна ссылка для всех — можно пересылать друзьям.")
+        return text, kb([("🔳 QR", "mtp:qr"), ("🩺 Проверка", "mtp:doctor"), ("🔄 Новая ссылка", "mtp:new")],
+                        [("⏸ Выключить", "mtp:toggle")], BACK)
+
+    @router.callback_query(F.data == "mtp")
+    async def mtproto(cb: CallbackQuery) -> None:
+        await show(cb, *mtproto_view())
+
+    @router.callback_query(F.data == "mtp:toggle")
+    async def mtproto_toggle(cb: CallbackQuery) -> None:
+        db.set("mtproto_enabled", "0" if db.get("mtproto_enabled") == "1" else "1")
+        await apply(cb)
+        await show(cb, *mtproto_view())
+
+    @router.callback_query(F.data == "mtp:qr")
+    async def mtproto_qr(cb: CallbackQuery) -> None:
+        await cb.message.answer_photo(BufferedInputFile(qr_png(service.mtproto_link()), "proxy.png"),
+                                      caption="QR прокси Telegram — отсканируйте камерой телефона")
+        await cb.answer()
+
+    @router.callback_query(F.data == "mtp:doctor")
+    async def mtproto_doctor(cb: CallbackQuery) -> None:
+        await cb.answer("Проверяю, до минуты…")
+        proc = await asyncio.create_subprocess_exec(
+            str(service.mtproto.binary), "doctor", str(service.mtproto.config_path),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+        try:
+            out, _ = await asyncio.wait_for(proc.communicate(), 90)
+        except asyncio.TimeoutError:
+            proc.kill()
+            out = b"timeout"
+        # IPv6 lines are noise on servers without IPv6
+        lines = [ln for ln in out.decode(errors="replace").splitlines() if "address family not supported" not in ln]
+        await cb.message.answer("<b>Проверка прокси</b> (✅ — в порядке)\n<pre>"
+                                f"{html.escape(chr(10).join(lines)[-3500:])}</pre>")
+
+    @router.callback_query(F.data == "mtp:new")
+    async def mtproto_new(cb: CallbackQuery) -> None:
+        await show(cb, "Сделать новую ссылку на прокси? Старая перестанет работать у всех, кому вы её давали.",
+                   kb([("Да", "mtp:newok"), ("Отмена", "mtp")]))
+
+    @router.callback_query(F.data == "mtp:newok")
+    async def mtproto_new_ok(cb: CallbackQuery) -> None:
+        service.regenerate_mtproto()
+        await apply(cb)
+        await show(cb, *mtproto_view())
 
     # ---------- settings ----------
     def settings_view() -> tuple[str, InlineKeyboardMarkup]:
@@ -614,6 +681,7 @@ def setup(service: Service) -> Router:
         await show(cb, "Какие логи показать?\n\nПодробные логи Xray показывают каждое подключение — "
                        "включите, попробуйте подключиться и откройте логи Xray.",
                    kb([("Xray", "log:xray"), ("Hysteria2", "log:hysteria"), ("AmneziaWG", "log:amneziawg")],
+                      [("MTProto", "log:mtproto")],
                       [(f"🔍 Подробные логи: {'вкл' if debug else 'выкл'}", "debuglogs")], BACK))
 
     @router.callback_query(F.data == "debuglogs")

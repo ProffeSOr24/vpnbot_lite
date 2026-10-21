@@ -103,6 +103,7 @@ async def main() -> None:
         await service.xray.stop()
         await service.hysteria.stop()
         await service.awg.stop()
+        await service.mtproto.stop()
         await runner.cleanup()
 
 

@@ -53,6 +53,7 @@ open_firewall() {
     ufw allow "$(env_port HY2_PORT 443)/udp"
     ufw allow "$(env_port AWG_PORT 51820)/udp"
     ufw allow "$(env_port SUB_PORT 2096)/tcp"
+    [ "$(env_port MTPROTO_PORT 8444)" = 0 ] || ufw allow "$(env_port MTPROTO_PORT 8444)/tcp"
 }
 
 version_url() {  # raw-ссылка на VERSION в GitHub, чтобы бот видел новые версии
@@ -91,7 +92,8 @@ EOF
 
 check_ports() {
     local port
-    for port in "$(env_port XRAY_PORT 443)" "$(env_port XHTTP_PORT 8443)" "$(env_port SUB_PORT 2096)"; do
+    for port in "$(env_port XRAY_PORT 443)" "$(env_port XHTTP_PORT 8443)" "$(env_port SUB_PORT 2096)" \
+                "$(env_port MTPROTO_PORT 8444)"; do
         [ "$port" = 0 ] && continue
         if ss -ltnH "sport = :$port" 2>/dev/null | grep -q . && ! docker ps --format '{{.Names}}' | grep -q '^vpnbot-lite$'; then
             echo "⚠️  Порт $port/tcp уже занят другим процессом:"; ss -ltnpH "sport = :$port" || true

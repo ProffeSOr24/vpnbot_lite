@@ -530,3 +530,45 @@ class AmneziaWG(Core):
 
 
 AWG_PARAMS = ("Jc", "Jmin", "Jmax", "S1", "S2", "H1", "H2", "H3", "H4")
+
+
+class MTProto(Core):
+    """MTProto proxy for Telegram (mtg, fake-TLS). Built from source with the image, updated with the bot."""
+    name = "mtproto"
+    repo = ""
+
+    @property
+    def config_path(self) -> Path:
+        return config.DATA_DIR / "mtg.toml"
+
+    @property
+    def binary(self) -> Path:
+        return config.BUILTIN_BIN_DIR / "mtg"
+
+    def args(self) -> list[str]:
+        return [str(self.binary), "run", str(self.config_path)]
+
+    async def version(self, binary: Path | None = None) -> str | None:
+        if not self.binary.exists():
+            return None
+        code, out = await run(str(self.binary), "--version")
+        return out.split()[0] if code == 0 and out else None
+
+    def write_config(self, s: dict) -> bool:
+        """Returns True when the config changed (mtg has to be restarted to pick it up)."""
+        text = "\n".join([
+            f'secret = "{s["mtproto_secret"]}"',
+            f'bind-to = "0.0.0.0:{config.MTPROTO_PORT}"',
+            'prefer-ip = "prefer-ipv4"',
+            "",
+            # non-Telegram clients (probes) are forwarded to the real HTTPS site of the domain in the secret
+            "[domain-fronting]",
+            "port = 443",
+            "",
+            "[stats.prometheus]",
+            "enabled = false",
+            "",
+        ])
+        old = self.config_path.read_text() if self.config_path.exists() else ""
+        self.config_path.write_text(text)
+        return text != old

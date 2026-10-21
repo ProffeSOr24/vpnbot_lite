@@ -1,9 +1,12 @@
-# AmneziaWG has no prebuilt Linux binaries: build the userspace daemon and the awg tool from source.
-FROM golang:1.25-bookworm AS awg
+# AmneziaWG and mtg (MTProto proxy) are built from source; they are updated together with the bot.
+FROM golang:1.26-bookworm AS awg
 RUN git clone --depth 1 https://github.com/amnezia-vpn/amneziawg-go.git /src/go \
     && cd /src/go && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/amneziawg-go . \
     && git clone --depth 1 https://github.com/amnezia-vpn/amneziawg-tools.git /src/tools \
     && make -C /src/tools/src -j"$(nproc)" && cp /src/tools/src/wg /out/awg
+RUN TAG="$(git ls-remote --tags --sort=-v:refname https://github.com/9seconds/mtg.git 'v2*' | head -1 | sed 's#.*refs/tags/##')" \
+    && git clone --depth 1 --branch "$TAG" https://github.com/9seconds/mtg.git /src/mtg \
+    && cd /src/mtg && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$TAG" -o /out/mtg .
 
 FROM python:3.12-slim-bookworm
 
