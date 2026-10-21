@@ -25,6 +25,9 @@ AWG_SUBNET = os.environ.get("AWG_SUBNET", "10.66.66.0/24").strip()
 AWG_DNS = os.environ.get("AWG_DNS", "1.1.1.1, 8.8.8.8").strip()
 # Public base URL for subscriptions, e.g. https://sub.example.com (if behind a reverse proxy)
 SUB_URL = os.environ.get("SUB_URL", "").strip().rstrip("/")
+# serve subscriptions over HTTPS with an existing certificate (e.g. the old vpnbot's Let's Encrypt one)
+SUB_CERT = os.environ.get("SUB_CERT", "").strip()
+SUB_KEY = os.environ.get("SUB_KEY", "").strip()
 
 XRAY_API = "127.0.0.1:10085"
 HY2_STATS = "127.0.0.1:10086"

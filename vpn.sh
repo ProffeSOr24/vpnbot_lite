@@ -3,6 +3,7 @@
 #   ./vpn.sh install [BOT_TOKEN] [ADMIN_ID]   установка (Docker, настройки ядра, автообновление)
 #   ./vpn.sh update                           обновить бота из git и пересобрать
 #   ./vpn.sh https [ПОРТ]                     подписки по https (бесплатный адрес IP.nip.io + Let's Encrypt)
+#   ./vpn.sh https-cert CERT KEY              подписки по https с готовым сертификатом (например, от старого vpnbot)
 #   ./vpn.sh restart | stop | status | logs
 set -euo pipefail
 
@@ -156,6 +157,33 @@ cmd_https() {
     echo "  docker compose logs caddy --tail 30"
 }
 
+cmd_https_cert() {
+    need_root "$@"
+    local cert="${1:-}" key="${2:-}" domain url port
+    [ -f "$cert" ] && [ -f "$key" ] || die "укажите файлы сертификата и ключа: ./vpn.sh https-cert CERT KEY"
+    [ "$(dirname "$cert")" = "$(dirname "$key")" ] || die "сертификат и ключ должны лежать в одной папке"
+    domain="$(openssl x509 -in "$cert" -noout -ext subjectAltName 2>/dev/null | grep -o 'DNS:[^,]*' | head -1 | cut -d: -f2)"
+    [ -n "$domain" ] || die "в сертификате нет доменного имени"
+    openssl x509 -in "$cert" -noout -checkend 0 >/dev/null || die "сертификат просрочен"
+    port="$(env_port SUB_PORT 2096)"
+    url="https://$domain"
+    [ "$port" = 443 ] || url="$url:$port"
+    env_set SUB_CERT_DIR "$(cd "$(dirname "$cert")" && pwd)"
+    env_set SUB_CERT "/certs/$(basename "$cert")"
+    env_set SUB_KEY "/certs/$(basename "$key")"
+    env_set SUB_URL "$url"
+    log "Подписки будут по $url (сертификат $(openssl x509 -in "$cert" -noout -enddate | cut -d= -f2))"
+    docker compose up -d --force-recreate vpnbot
+    for _ in $(seq 12); do
+        if curl -fsS --max-time 5 --resolve "$domain:$port:127.0.0.1" "$url/health" >/dev/null 2>&1; then
+            log "Готово! Новые ссылки — в боте: Пользователи → пользователь → Ключи и QR"
+            return
+        fi
+        sleep 5
+    done
+    echo "Не отвечает по https. Логи: ./vpn.sh logs"
+}
+
 cmd_update() {
     rm -f data/update.request
     if [ -d .git ] || git rev-parse --git-dir >/dev/null 2>&1; then
@@ -178,9 +206,10 @@ case "${1:-}" in
     install) shift; cmd_install "$@" ;;
     update) cmd_update ;;
     https) shift; cmd_https "$@" ;;
+    https-cert) shift; cmd_https_cert "$@" ;;
     restart) docker compose restart ;;
     stop) docker compose down ;;
     status) docker compose ps ;;
     logs) docker compose logs -f --tail=200 ;;
-    *) sed -n '2,6p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+    *) sed -n '2,7p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

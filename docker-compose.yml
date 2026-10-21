@@ -14,9 +14,11 @@ services:
       - /dev/net/tun:/dev/net/tun
     volumes:
       - ./data:/data
+      # an existing certificate for HTTPS subscriptions, see `./vpn.sh https-cert`
+      - ${SUB_CERT_DIR:-./data/certs}:/certs:ro
     stop_grace_period: 15s
     healthcheck:
-      test: ["CMD-SHELL", "curl -fs http://127.0.0.1:$${SUB_PORT:-2096}/health || exit 1"]
+      test: ["CMD-SHELL", "curl -fsk https://127.0.0.1:$${SUB_PORT:-2096}/health || curl -fs http://127.0.0.1:$${SUB_PORT:-2096}/health"]
       interval: 1m
       timeout: 5s
       retries: 3

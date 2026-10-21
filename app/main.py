@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import ssl
 import time
 
 import psutil
@@ -25,9 +26,17 @@ async def notify(bot: Bot, text: str) -> None:
             log.warning("cannot notify %s: %s", admin, e)
 
 
-async def background(service: Service, bot: Bot) -> None:
-    """Every minute: account traffic and disable expired users. Once a day: send a backup."""
-    last_backup = time.time()
+def sub_ssl_context() -> ssl.SSLContext | None:
+    if not (config.SUB_CERT and config.SUB_KEY):
+        return None
+    ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    ctx.load_cert_chain(config.SUB_CERT, config.SUB_KEY)
+    return ctx
+
+
+async def background(service: Service, bot: Bot, ssl_ctx: ssl.SSLContext | None) -> None:
+    """Every minute: account traffic and disable expired users. Once a day: send a backup, reload the cert."""
+    last_backup = last_cert_reload = time.time()
     while True:
         await asyncio.sleep(60)
         try:
@@ -39,6 +48,9 @@ async def background(service: Service, bot: Bot) -> None:
                 last_backup = time.time()
                 for admin in config.ADMIN_IDS:
                     await send_backup(service, bot, admin)
+            if ssl_ctx and time.time() - last_cert_reload > 86400:
+                last_cert_reload = time.time()
+                ssl_ctx.load_cert_chain(config.SUB_CERT, config.SUB_KEY)  # pick up a renewed certificate
         except Exception:  # noqa: BLE001 - the loop must survive
             log.exception("background job failed")
 
@@ -62,8 +74,9 @@ async def main() -> None:
 
     runner = web.AppRunner(make_app(service), access_log=None)
     await runner.setup()
-    await web.TCPSite(runner, "0.0.0.0", config.SUB_PORT).start()
-    log.info("subscription server on :%s", config.SUB_PORT)
+    ssl_ctx = sub_ssl_context()
+    await web.TCPSite(runner, "0.0.0.0", config.SUB_PORT, ssl_context=ssl_ctx).start()
+    log.info("subscription server on %s:%s", "https" if ssl_ctx else "http", config.SUB_PORT)
 
     bot = Bot(config.BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
     dp = Dispatcher()
@@ -81,7 +94,7 @@ async def main() -> None:
 
     # a webhook left by another bot on the same token (e.g. the old vpnbot) blocks polling
     await bot.delete_webhook(drop_pending_updates=False)
-    task = asyncio.create_task(background(service, bot))
+    task = asyncio.create_task(background(service, bot, ssl_ctx))
     try:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:
