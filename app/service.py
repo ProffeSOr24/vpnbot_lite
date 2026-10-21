@@ -5,6 +5,7 @@ import datetime
 import hashlib
 import ipaddress
 import logging
+import random
 import secrets
 import time
 from urllib.parse import quote, urlencode
@@ -17,8 +18,8 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from cryptography.x509.oid import NameOID
 
 from . import config
-from .cores import Hysteria, Xray
-from .db import DB
+from .cores import AWG_PARAMS, AmneziaWG, Hysteria, Xray
+from .db import DB, wg_keypair
 
 log = logging.getLogger(__name__)
 
@@ -75,6 +76,7 @@ class Service:
         self.db = DB(config.DATA_DIR / "vpnbot.db")
         self.xray = Xray()
         self.hysteria = Hysteria()
+        self.awg = AmneziaWG()
         self._apply_lock = asyncio.Lock()
 
     # --- settings ---
@@ -91,9 +93,25 @@ class Service:
             db.set("hy_cert", cert)
             db.set("hy_key", key)
         for k, v in (("hy_stats_secret", secrets.token_hex(16)), ("hy_obfs_password", secrets.token_urlsafe(16)),
-                     ("hy_obfs", "0"), ("block_ads", "0"), ("hy_enabled", "1")):
+                     ("hy_obfs", "0"), ("block_ads", "0"), ("hy_enabled", "1"), ("awg_enabled", "1")):
             if db.get(k) is None:
                 db.set(k, v)
+        if not db.get("awg_private"):
+            self.regenerate_awg()
+        db.ensure_awg(config.AWG_SUBNET)
+
+    def regenerate_awg(self) -> None:
+        """New server key and obfuscation parameters (all AmneziaWG configs must be re-issued)."""
+        private, public = wg_keypair()
+        s1 = random.randint(15, 150)
+        s2 = random.choice([x for x in range(15, 151) if x != s1 + 56])  # sizes must not collide
+        h = random.sample(range(5, 2 ** 31 - 1), 4)
+        params = {"jc": 4, "jmin": 40, "jmax": 70, "s1": s1, "s2": s2,
+                  "h1": h[0], "h2": h[1], "h3": h[2], "h4": h[3]}
+        self.db.set("awg_private", private)
+        self.db.set("awg_public", public)
+        for k, v in params.items():
+            self.db.set(f"awg_{k}", str(v))
 
     def regenerate_reality(self) -> None:
         private, public = reality_keys()
@@ -164,6 +182,15 @@ class Service:
             links.append(self.hy2_link(user))
         return links
 
+    def awg_conf(self, user) -> str:
+        s = self.settings()
+        lines = ["[Interface]", f"PrivateKey = {user['awg_private']}", f"Address = {user['awg_ip']}/32",
+                 f"DNS = {config.AWG_DNS}", *(f"{k} = {s['awg_' + k.lower()]}" for k in AWG_PARAMS),
+                 "", "[Peer]", f"PublicKey = {s['awg_public']}", f"PresharedKey = {user['awg_psk']}",
+                 f"Endpoint = {self._host_for_url()}:{config.AWG_PORT}",
+                 "AllowedIPs = 0.0.0.0/0", "PersistentKeepalive = 25"]
+        return "\n".join(lines) + "\n"
+
     # --- applying ---
     async def apply(self) -> str | None:
         """Regenerate configs and restart the cores. Returns an error text or None."""
@@ -182,12 +209,25 @@ class Service:
                 await self.hysteria.restart()
             else:
                 await self.hysteria.stop()
+            try:
+                self.db.ensure_awg(config.AWG_SUBNET)
+                users = self.db.users(only_enabled=True)
+                if s.get("awg_enabled") == "1" and users:
+                    self.awg.write_config(users, s)
+                    await self.awg.sync()
+                else:
+                    await self.awg.stop()
+            except Exception as e:  # noqa: BLE001 - Xray/Hysteria keep working even if AWG can't start
+                log.exception("amneziawg apply failed")
+                return f"AmneziaWG: {e}"
             return None
 
     async def collect_stats(self) -> None:
         stats: dict[str, list[int]] = {}
+        awg_names = {u["awg_public"]: u["name"] for u in self.db.users() if u["awg_public"]}
         for part in (await self.xray.pop_stats(),
-                     await self.hysteria.pop_stats(self.db.get("hy_stats_secret", ""))):
+                     await self.hysteria.pop_stats(self.db.get("hy_stats_secret", "")),
+                     await self.awg.pop_stats(awg_names)):
             for name, (up, down) in part.items():
                 acc = stats.setdefault(name, [0, 0])
                 acc[0] += up

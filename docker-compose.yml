@@ -7,6 +7,11 @@ services:
     # host network: no NAT overhead, real client IPs, ports are opened directly on the server
     network_mode: host
     env_file: .env
+    # AmneziaWG: create the awg0 tun interface and NAT rules on the host
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
     volumes:
       - ./data:/data
     stop_grace_period: 15s

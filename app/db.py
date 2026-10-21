@@ -1,8 +1,13 @@
+import base64
+import ipaddress
 import secrets
 import sqlite3
 import time
 import uuid
 from pathlib import Path
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -24,6 +29,22 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 """
 
+# columns added after the first release: (name, type)
+MIGRATIONS = [("awg_private", "TEXT"), ("awg_public", "TEXT"), ("awg_psk", "TEXT"), ("awg_ip", "TEXT")]
+
+
+def wg_keypair() -> tuple[str, str]:
+    """WireGuard/AmneziaWG key pair in standard base64."""
+    key = X25519PrivateKey.generate()
+    private = key.private_bytes(serialization.Encoding.Raw, serialization.PrivateFormat.Raw,
+                                serialization.NoEncryption())
+    public = key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    return base64.b64encode(private).decode(), base64.b64encode(public).decode()
+
+
+def wg_psk() -> str:
+    return base64.b64encode(secrets.token_bytes(32)).decode()
+
 
 class DB:
     def __init__(self, path: Path):
@@ -37,6 +58,10 @@ class DB:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.executescript(SCHEMA)
+        columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(users)")}
+        for name, kind in MIGRATIONS:
+            if name not in columns:
+                self.conn.execute(f"ALTER TABLE users ADD COLUMN {name} {kind}")
 
     def close(self) -> None:
         if self.conn:
@@ -79,6 +104,29 @@ class DB:
              expire_at, limit_bytes, int(time.time())),
         )
         return cur.lastrowid
+
+    def ensure_awg(self, subnet: str) -> None:
+        """Give every user AmneziaWG keys and a tunnel address (server takes the first host)."""
+        net = ipaddress.ip_network(subnet, strict=False)
+        hosts = [str(h) for h in net.hosts()][1:]
+        users = self.conn.execute("SELECT id, awg_private, awg_ip FROM users ORDER BY id").fetchall()
+        taken = {u["awg_ip"] for u in users if u["awg_ip"] in hosts}
+        free = (h for h in hosts if h not in taken)
+        seen: set[str] = set()
+        for u in users:
+            fields = {}
+            if not u["awg_private"]:
+                fields["awg_private"], fields["awg_public"] = wg_keypair()
+                fields["awg_psk"] = wg_psk()
+            ip = u["awg_ip"]
+            if ip not in hosts or ip in seen:
+                ip = next(free, None)
+                if ip is None:
+                    raise RuntimeError(f"В подсети {subnet} закончились адреса AmneziaWG")
+                fields["awg_ip"] = ip
+            seen.add(ip)
+            if fields:
+                self.update_user(u["id"], **fields)
 
     def update_user(self, user_id: int, **fields) -> None:
         cols = ", ".join(f"{k}=?" for k in fields)

@@ -87,6 +87,7 @@ async def main() -> None:
         await service.collect_stats()
         await service.xray.stop()
         await service.hysteria.stop()
+        await service.awg.stop()
         await runner.cleanup()
 
 

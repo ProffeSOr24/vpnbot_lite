@@ -1,7 +1,14 @@
-FROM python:3.12-slim
+# AmneziaWG has no prebuilt Linux binaries: build the userspace daemon and the awg tool from source.
+FROM golang:1.25-bookworm AS awg
+RUN git clone --depth 1 https://github.com/amnezia-vpn/amneziawg-go.git /src/go \
+    && cd /src/go && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/amneziawg-go . \
+    && git clone --depth 1 https://github.com/amnezia-vpn/amneziawg-tools.git /src/tools \
+    && make -C /src/tools/src -j"$(nproc)" && cp /src/tools/src/wg /out/awg
+
+FROM python:3.12-slim-bookworm
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl unzip tzdata \
+    && apt-get install -y --no-install-recommends ca-certificates curl unzip tzdata iproute2 iptables \
     && rm -rf /var/lib/apt/lists/*
 
 # Latest Xray and Hysteria2 at build time. Later updates are installed from the bot into /data/bin.
@@ -18,6 +25,8 @@ RUN set -eux; \
     curl -fsSL -o /opt/bin/hysteria "https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-${HARCH}"; \
     chmod +x /opt/bin/xray /opt/bin/hysteria; \
     /opt/bin/xray version; /opt/bin/hysteria version
+
+COPY --from=awg /out/ /opt/bin/
 
 WORKDIR /srv
 COPY requirements.txt .

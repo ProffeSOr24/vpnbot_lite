@@ -2,6 +2,7 @@
 import asyncio
 import collections
 import io
+import ipaddress
 import json
 import logging
 import os
@@ -130,6 +131,11 @@ class Core:
             *self.args(), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, env=self.env())
         self.started_at = time.time()
         asyncio.create_task(self._read_output(self.proc))
+        try:
+            await self.after_start()
+        except Exception as e:  # noqa: BLE001 - keep the supervisor alive, the error goes to the logs
+            log.exception("%s after_start failed", self.name)
+            self.logs.append(f"!!! ошибка настройки: {e}")
 
     async def _kill(self) -> None:
         if not self.running:
@@ -140,6 +146,13 @@ class Core:
         except asyncio.TimeoutError:
             self.proc.kill()
             await self.proc.wait()
+        await self.after_stop()
+
+    async def after_start(self) -> None:
+        """Hook: configure things around a freshly started process."""
+
+    async def after_stop(self) -> None:
+        """Hook: clean up after the process is stopped."""
 
     async def _read_output(self, proc: asyncio.subprocess.Process) -> None:
         async for line in proc.stdout:
@@ -375,3 +388,129 @@ class Hysteria(Core):
             return {}
         # hysteria: tx = sent to client (download), rx = received from client (upload)
         return {name: [int(v.get("rx", 0)), int(v.get("tx", 0))] for name, v in (data or {}).items()}
+
+
+async def run(*cmd: str) -> tuple[int, str]:
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    out, _ = await asyncio.wait_for(proc.communicate(), 20)
+    return proc.returncode, out.decode(errors="replace").strip()
+
+
+class AmneziaWG(Core):
+    """Userspace AmneziaWG (amneziawg-go). Built from source with the image, updated together with the bot."""
+    name = "amneziawg"
+    repo = ""
+
+    def __init__(self):
+        super().__init__()
+        self._last: dict[str, tuple[int, int]] = {}
+
+    @property
+    def config_path(self) -> Path:
+        return config.DATA_DIR / f"{config.AWG_IFACE}.conf"
+
+    @property
+    def binary(self) -> Path:
+        return config.BUILTIN_BIN_DIR / "amneziawg-go"
+
+    @property
+    def awg(self) -> str:
+        return str(config.BUILTIN_BIN_DIR / "awg")
+
+    def args(self) -> list[str]:
+        return [str(self.binary), "-f", config.AWG_IFACE]
+
+    def env(self) -> dict[str, str]:
+        return {**os.environ, "LOG_LEVEL": "error"}
+
+    async def version(self, binary: Path | None = None) -> str | None:
+        if not self.binary.exists():
+            return None
+        code, out = await run(str(self.binary), "--version")
+        m = re.search(r"amneziawg-go v?(\S+)", out)
+        return m.group(1) if m else None
+
+    def write_config(self, users, s: dict) -> None:
+        lines = ["[Interface]", f"PrivateKey = {s['awg_private']}", f"ListenPort = {config.AWG_PORT}",
+                 *(f"{k} = {s['awg_' + k.lower()]}" for k in AWG_PARAMS)]
+        for u in users:
+            lines += ["", "[Peer]", f"# {u['name']}", f"PublicKey = {u['awg_public']}",
+                      f"PresharedKey = {u['awg_psk']}", f"AllowedIPs = {u['awg_ip']}/32"]
+        self.config_path.write_text("\n".join(lines) + "\n")
+        self.config_path.chmod(0o600)
+
+    async def sync(self) -> None:
+        """Apply the peer list to the running interface without dropping connections."""
+        if not self.running:
+            await self.start()
+            return
+        code, out = await run(self.awg, "syncconf", config.AWG_IFACE, str(self.config_path))
+        if code != 0:
+            self.logs.append(f"syncconf: {out}")
+            await self.restart()
+
+    def _rules(self) -> list[tuple[str, str, list[str]]]:
+        i = config.AWG_IFACE
+        clamp = ["-p", "tcp", "--tcp-flags", "SYN,RST", "SYN", "-j", "TCPMSS", "--clamp-mss-to-pmtu"]
+        return [
+            ("nat", "POSTROUTING", ["-s", config.AWG_SUBNET, "!", "-o", i, "-j", "MASQUERADE"]),
+            ("filter", "FORWARD", ["-i", i, "-j", "ACCEPT"]),
+            ("filter", "FORWARD", ["-o", i, "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT"]),
+            ("mangle", "FORWARD", ["-i", i, *clamp]),
+            ("mangle", "FORWARD", ["-o", i, *clamp]),
+        ]
+
+    async def after_start(self) -> None:
+        sock = Path(f"/var/run/amneziawg/{config.AWG_IFACE}.sock")
+        for _ in range(100):
+            if sock.exists() or not self.running:
+                break
+            await asyncio.sleep(0.1)
+        if not self.running:
+            return
+        self._last.clear()
+        net = ipaddress.ip_network(config.AWG_SUBNET, strict=False)
+        steps = [
+            [self.awg, "setconf", config.AWG_IFACE, str(self.config_path)],
+            ["ip", "address", "replace", f"{next(net.hosts())}/{net.prefixlen}", "dev", config.AWG_IFACE],
+            ["ip", "link", "set", "dev", config.AWG_IFACE, "mtu", "1420", "up"],
+        ]
+        for table, chain, spec in self._rules():
+            if (await run("iptables", "-t", table, "-C", chain, *spec))[0] != 0:
+                # insert first so the rules win over Docker/ufw DROP policies
+                steps.append(["iptables", "-t", table, "-I", chain, "1", *spec])
+        for cmd in steps:
+            code, out = await run(*cmd)
+            if code != 0:
+                raise RuntimeError(f"{' '.join(cmd[:3])}: {out}")
+
+    async def after_stop(self) -> None:
+        for table, chain, spec in self._rules():
+            for _ in range(5):  # remove duplicates too
+                if (await run("iptables", "-t", table, "-D", chain, *spec))[0] != 0:
+                    break
+
+    async def pop_stats(self, names: dict[str, str]) -> dict[str, list[int]]:
+        """Traffic since the previous call. `names` maps public key -> user name."""
+        if not self.running:
+            return {}
+        code, out = await run(self.awg, "show", config.AWG_IFACE, "transfer")
+        if code != 0:
+            return {}
+        result: dict[str, list[int]] = {}
+        for line in out.splitlines():
+            parts = line.split("\t")
+            if len(parts) != 3 or parts[0] not in names:
+                continue
+            rx, tx = int(parts[1]), int(parts[2])
+            prev_rx, prev_tx = self._last.get(parts[0], (0, 0))
+            if rx < prev_rx or tx < prev_tx:  # peer was re-added, counters restarted
+                prev_rx, prev_tx = 0, 0
+            self._last[parts[0]] = (rx, tx)
+            # rx = received from the client (upload), tx = sent to the client (download)
+            result[names[parts[0]]] = [rx - prev_rx, tx - prev_tx]
+        return result
+
+
+AWG_PARAMS = ("Jc", "Jmin", "Jmax", "S1", "S2", "H1", "H2", "H3", "H4")

@@ -30,8 +30,9 @@ install_docker() {
 }
 
 tune_kernel() {
-    log "Включаю BBR и увеличиваю UDP-буферы (для Hysteria2)"
+    log "Включаю BBR, форвардинг (AmneziaWG) и увеличиваю UDP-буферы (Hysteria2)"
     cat > /etc/sysctl.d/99-vpnbot-lite.conf <<'EOF'
+net.ipv4.ip_forward=1
 net.core.default_qdisc=fq
 net.ipv4.tcp_congestion_control=bbr
 net.core.rmem_max=16777216
@@ -46,6 +47,7 @@ open_firewall() {
     log "Открываю порты в ufw"
     ufw allow "$(env_get XRAY_PORT)/tcp"
     ufw allow "$(env_get HY2_PORT)/udp"
+    ufw allow "$(env_get AWG_PORT)/udp"
     ufw allow "$(env_get SUB_PORT)/tcp"
 }
 
@@ -96,6 +98,7 @@ check_ports() {
 cmd_install() {
     need_root "$@"
     [ -f .env ] || cp .env.example .env
+    [ -n "$(env_get AWG_PORT)" ] || env_set AWG_PORT 51820  # .env от версии без AmneziaWG
     [ -n "${1:-}" ] && env_set BOT_TOKEN "$1"
     [ -n "${2:-}" ] && env_set ADMIN_IDS "$2"
     [ -n "$(env_get BOT_TOKEN)" ] || ask BOT_TOKEN "Токен бота от @BotFather"
@@ -117,6 +120,11 @@ cmd_update() {
     if [ -d .git ] || git rev-parse --git-dir >/dev/null 2>&1; then
         log "Скачиваю новую версию"
         git pull --ff-only
+    fi
+    if [ "$(id -u)" -eq 0 ]; then  # новые версии могут требовать новых портов/настроек ядра
+        [ -n "$(env_get AWG_PORT)" ] || env_set AWG_PORT 51820
+        tune_kernel
+        open_firewall
     fi
     log "Пересобираю"
     docker compose build --pull

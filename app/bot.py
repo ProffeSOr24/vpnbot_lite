@@ -79,6 +79,9 @@ def setup(service: Service) -> Router:
             await msg.answer(f"⚠️ Ошибка применения конфигурации:\n<pre>{html.escape(error)}</pre>")
         return error is None
 
+    def dot(core) -> str:
+        return "🟢" if core.running else ("⚪️" if not core.wanted else "🔴")
+
     # ---------- main menu ----------
     def menu_markup() -> InlineKeyboardMarkup:
         return kb([("👥 Пользователи", "users"), ("📊 Сервер", "server")],
@@ -91,8 +94,8 @@ def setup(service: Service) -> Router:
         return (f"<b>VPN Bot Lite</b> v{config.VERSION}\n"
                 f"Сервер: <code>{html.escape(service.host)}</code>\n"
                 f"Пользователи: {active} активных из {len(users)}\n"
-                f"Xray: {'🟢' if service.xray.running else '🔴'}   "
-                f"Hysteria2: {'🟢' if service.hysteria.running else ('⚪️' if not service.hysteria.wanted else '🔴')}")
+                f"Xray: {dot(service.xray)}   "
+                f"Hysteria2: {dot(service.hysteria)}   AmneziaWG: {dot(service.awg)}")
 
     @router.message(CommandStart())
     @router.message(Command("menu"))
@@ -135,7 +138,7 @@ def setup(service: Service) -> Router:
                 f"<b>{fmt_bytes(u['up'] + u['down'])}</b> / {limit}\n"
                 f"Создан: {fmt_date(u['created_at'])}")
         i = u["id"]
-        markup = kb([("🔗 Ключи и QR", f"links:{i}")],
+        markup = kb([("🔗 Ключи и QR", f"links:{i}"), ("📡 AmneziaWG (роутер)", f"awg:{i}")],
                     [("⏸ Отключить" if u["enabled"] else "▶️ Включить", f"toggle:{i}"),
                      ("📅 Срок", f"days:{i}"), ("📦 Лимит", f"limit:{i}")],
                     [("🔄 Сбросить трафик", f"reset:{i}"), ("🗑 Удалить", f"del:{i}")],
@@ -166,6 +169,23 @@ def setup(service: Service) -> Router:
                 + "\n\nПриложения: Hiddify, v2RayTun, Happ (iOS/Android), v2rayN (Windows), Streisand (iOS).")
         await cb.message.answer_photo(BufferedInputFile(qr_png(sub), "qr.png"), caption="QR-код подписки")
         await cb.message.answer(text, disable_web_page_preview=True)
+        await cb.answer()
+
+    @router.callback_query(F.data.startswith("awg:"))
+    async def user_awg(cb: CallbackQuery) -> None:
+        u = await get_user(cb)
+        if not u:
+            return
+        if db.get("awg_enabled") != "1":
+            await cb.answer("AmneziaWG выключен в настройках", show_alert=True)
+            return
+        conf = service.awg_conf(u)
+        await cb.message.answer_document(
+            BufferedInputFile(conf.encode(), f"{u['name']}.conf"),
+            caption=f"📡 AmneziaWG для <b>{html.escape(u['name'])}</b>\n"
+                    "Роутер: Keenetic (4.2+), OpenWrt (amneziawg) — импорт этого .conf.\n"
+                    "Телефон/ПК: приложение AmneziaVPN или AmneziaWG — импорт файла или QR.")
+        await cb.message.answer_photo(BufferedInputFile(qr_png(conf), "awg.png"), caption="QR для AmneziaWG")
         await cb.answer()
 
     @router.callback_query(F.data.startswith("toggle:"))
@@ -343,7 +363,8 @@ def setup(service: Service) -> Router:
                 f"RAM: {fmt_bytes(mem.used)} / {fmt_bytes(mem.total)} ({mem.percent:.0f}%)\n"
                 f"Диск: {fmt_bytes(disk.used)} / {fmt_bytes(disk.total)} ({disk.percent:.0f}%)\n"
                 f"Сеть с загрузки ОС: ↑{fmt_bytes(net.bytes_sent)} ↓{fmt_bytes(net.bytes_recv)}\n\n"
-                f"{core_line(service.xray, xv)}\n{core_line(service.hysteria, hv)}\n\n"
+                f"{core_line(service.xray, xv)}\n{core_line(service.hysteria, hv)}\n"
+                f"{core_line(service.awg, await service.awg.version())}\n\n"
                 f"Трафик пользователей (всего): {fmt_bytes(total)}")
         await show(cb, text, kb([("🔄 Обновить", "server"), ("♻️ Перезапуск ядер", "restart")], BACK))
 
@@ -384,6 +405,7 @@ def setup(service: Service) -> Router:
                 if core.has_backup():
                     rows.append([(f"↩️ Откатить {core.name}", f"rollback:{core.name}")])
             remote = await remote_bot_version(session)
+        lines.append(f"amneziawg: {await service.awg.version() or '?'} (обновляется вместе с ботом)")
         if remote and remote != config.VERSION:
             lines.append(f"бот: {config.VERSION} → доступна <b>{html.escape(remote)}</b>")
         else:
@@ -393,7 +415,7 @@ def setup(service: Service) -> Router:
         await show(cb, "\n".join(lines), kb(*rows))
 
     def core_by_name(name: str):
-        return {"xray": service.xray, "hysteria": service.hysteria}[name]
+        return {"xray": service.xray, "hysteria": service.hysteria, "amneziawg": service.awg}[name]
 
     @router.callback_query(F.data.startswith("upd:"))
     async def update_core(cb: CallbackQuery) -> None:
@@ -441,13 +463,15 @@ def setup(service: Service) -> Router:
         text = (f"<b>Настройки</b>\n\n"
                 f"Адрес сервера: <code>{html.escape(service.host)}</code>\n"
                 f"Порты: Reality {config.XRAY_PORT}/tcp, Hysteria2 {config.HY2_PORT}/udp, "
-                f"подписка {config.SUB_PORT}/tcp\n\n"
+                f"AmneziaWG {config.AWG_PORT}/udp, подписка {config.SUB_PORT}/tcp\n\n"
                 f"<b>VLESS Reality</b>\nSNI (маскировка): <code>{html.escape(s['reality_sni'])}</code>\n"
                 f"Public key: <code>{s['reality_public']}</code>\nShort ID: <code>{s['reality_sid']}</code>\n\n"
                 f"<b>Hysteria2</b>: {on('hy_enabled')}, обфускация Salamander: {on('hy_obfs')}\n"
+                f"<b>AmneziaWG</b>: {on('awg_enabled')}, подсеть {config.AWG_SUBNET}\n"
                 f"<b>Блокировка рекламы</b>: {on('block_ads')}")
         markup = kb([("🌐 SNI Reality", "set:sni"), ("🔑 Новые ключи Reality", "set:rekey")],
                     [(f"Hysteria2: {on('hy_enabled')}", "set:hy"), (f"Обфускация: {on('hy_obfs')}", "set:obfs")],
+                    [(f"AmneziaWG: {on('awg_enabled')}", "set:awg"), ("🔑 Новые ключи AWG", "set:awgkey")],
                     [(f"Блок рекламы: {on('block_ads')}", "set:ads"), ("📍 Адрес сервера", "set:host")],
                     BACK)
         return text, markup
@@ -457,13 +481,14 @@ def setup(service: Service) -> Router:
         await state.clear()
         await show(cb, *settings_view())
 
-    @router.callback_query(F.data.in_({"set:hy", "set:obfs", "set:ads"}))
+    @router.callback_query(F.data.in_({"set:hy", "set:obfs", "set:ads", "set:awg"}))
     async def toggle_setting(cb: CallbackQuery) -> None:
-        key = {"set:hy": "hy_enabled", "set:obfs": "hy_obfs", "set:ads": "block_ads"}[cb.data]
+        key = {"set:hy": "hy_enabled", "set:obfs": "hy_obfs", "set:ads": "block_ads",
+               "set:awg": "awg_enabled"}[cb.data]
         db.set(key, "0" if db.get(key) == "1" else "1")
         await apply(cb)
         await show(cb, *settings_view())
-        if key != "block_ads":
+        if key in ("hy_enabled", "hy_obfs"):
             await cb.message.answer("ℹ️ Ссылки изменились — клиентам с подпиской достаточно обновить её.")
 
     @router.callback_query(F.data == "set:rekey")
@@ -474,6 +499,19 @@ def setup(service: Service) -> Router:
     @router.callback_query(F.data == "set:rekeyok")
     async def rekey_ok(cb: CallbackQuery) -> None:
         service.regenerate_reality()
+        await apply(cb)
+        await show(cb, *settings_view())
+
+    @router.callback_query(F.data == "set:awgkey")
+    async def awg_rekey(cb: CallbackQuery) -> None:
+        await show(cb, "Сгенерировать новый ключ и параметры обфускации AmneziaWG? Все выданные .conf "
+                       "перестанут работать — их нужно будет выдать заново.",
+                   kb([("Да", "set:awgkeyok"), ("Отмена", "settings")]))
+
+    @router.callback_query(F.data == "set:awgkeyok")
+    async def awg_rekey_ok(cb: CallbackQuery) -> None:
+        service.regenerate_awg()
+        await service.awg.stop()  # obfuscation parameters can't be changed on a running interface
         await apply(cb)
         await show(cb, *settings_view())
 
@@ -546,13 +584,15 @@ def setup(service: Service) -> Router:
             db.open()
         await state.clear()
         service.init_settings()
+        await service.awg.stop()  # the restored server key/parameters need a fresh interface
         await apply(message)
         await message.answer(f"✅ Восстановлено. Пользователей: {len(db.users())}", reply_markup=menu_markup())
 
     # ---------- logs ----------
     @router.callback_query(F.data == "logs")
     async def logs(cb: CallbackQuery) -> None:
-        await show(cb, "Какие логи показать?", kb([("Xray", "log:xray"), ("Hysteria2", "log:hysteria")], BACK))
+        await show(cb, "Какие логи показать?", kb([("Xray", "log:xray"), ("Hysteria2", "log:hysteria"),
+                                                ("AmneziaWG", "log:amneziawg")], BACK))
 
     @router.callback_query(F.data.startswith("log:"))
     async def show_logs(cb: CallbackQuery) -> None:

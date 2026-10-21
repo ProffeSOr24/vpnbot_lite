@@ -18,6 +18,10 @@ SERVER_HOST = os.environ.get("SERVER_HOST", "").strip()
 XRAY_PORT = _int("XRAY_PORT", 443)
 HY2_PORT = _int("HY2_PORT", 443)
 SUB_PORT = _int("SUB_PORT", 2096)
+AWG_PORT = _int("AWG_PORT", 51820)
+AWG_IFACE = "awg0"
+AWG_SUBNET = os.environ.get("AWG_SUBNET", "10.66.66.0/24").strip()
+AWG_DNS = os.environ.get("AWG_DNS", "1.1.1.1, 8.8.8.8").strip()
 # Public base URL for subscriptions, e.g. https://sub.example.com (if behind a reverse proxy)
 SUB_URL = os.environ.get("SUB_URL", "").strip().rstrip("/")
 
