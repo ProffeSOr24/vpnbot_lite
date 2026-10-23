@@ -559,7 +559,9 @@ def setup(service: Service) -> Router:
                 f"XHTTP: {on('xhttp_enabled') if config.XHTTP_PORT else 'выкл (XHTTP_PORT=0)'}\n"
                 f"Public key: <code>{s['reality_public']}</code>\nShort ID: <code>{s['reality_sid']}</code>\n\n"
                 f"<b>Hysteria2</b>: {on('hy_enabled')}, обфускация Salamander: {on('hy_obfs')}\n"
-                f"<b>AmneziaWG</b>: {on('awg_enabled')}, подсеть {config.AWG_SUBNET}\n"
+                f"<b>AmneziaWG</b>: {on('awg_enabled')}, подсеть {config.AWG_SUBNET}, порт {config.AWG_PORT}\n"
+                f"Маскировка новых конфигов: "
+                f"{'QUIC Initial 1200 байт' if s.get('awg_client_profile', 'quic') == 'quic' else 'как у сервера'}\n"
                 f"<b>Блокировка рекламы</b>: {on('block_ads')}")
         markup = kb([("🌐 SNI Reality", "set:sni"), ("🩺 Проверить SNI", "set:check")],
                     [(f"SNI в ссылках: {'нет' if s.get('reality_nosni') == '1' else 'да'}", "set:nosni"),
@@ -567,6 +569,8 @@ def setup(service: Service) -> Router:
                     [("🔑 Новые ключи Reality", "set:rekey")],
                     [(f"Hysteria2: {on('hy_enabled')}", "set:hy"), (f"Обфускация: {on('hy_obfs')}", "set:obfs")],
                     [(f"AmneziaWG: {on('awg_enabled')}", "set:awg"), ("🔑 Новые ключи AWG", "set:awgkey")],
+                    [("Маскировка новых AWG-конфигов: "
+                      + ("QUIC" if s.get("awg_client_profile", "quic") == "quic" else "как у сервера"), "set:awgprof")],
                     [(f"Блок рекламы: {on('block_ads')}", "set:ads"), ("📍 Адрес сервера", "set:host")],
                     BACK)
         return text, markup
@@ -599,8 +603,9 @@ def setup(service: Service) -> Router:
 
     @router.callback_query(F.data == "set:awgkey")
     async def awg_rekey(cb: CallbackQuery) -> None:
-        await show(cb, "Сгенерировать новый ключ и параметры обфускации AmneziaWG? Все выданные .conf "
-                       "перестанут работать — их нужно будет выдать заново.",
+        await show(cb, "⚠️ Сгенерировать новый ключ и маскировку AmneziaWG (2.0)?\n\n"
+                       "<b>Все</b> выданные .conf перестанут работать, <b>включая роутер</b> — "
+                       "их нужно будет выдать и импортировать заново.",
                    kb([("Да", "set:awgkeyok"), ("Отмена", "settings")]))
 
     @router.callback_query(F.data == "set:awgkeyok")
@@ -608,6 +613,12 @@ def setup(service: Service) -> Router:
         service.regenerate_awg()
         await service.awg.stop()  # obfuscation parameters can't be changed on a running interface
         await apply(cb)
+        await show(cb, *settings_view())
+
+    @router.callback_query(F.data == "set:awgprof")
+    async def awg_profile(cb: CallbackQuery) -> None:
+        # client-side only: affects .conf files issued from now on; the server and existing devices are unchanged
+        db.set("awg_client_profile", "server" if db.get("awg_client_profile", "quic") == "quic" else "quic")
         await show(cb, *settings_view())
 
     @router.callback_query(F.data == "set:sni")

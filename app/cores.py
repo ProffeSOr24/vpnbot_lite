@@ -571,9 +571,26 @@ XHTTP_CLIENT = {"xPaddingBytes": "100-1000", "noGRPCHeader": False, "scMaxEachPo
 AWG_PARAMS = ("Jc", "Jmin", "Jmax", "S1", "S2", "S3", "S4", "H1", "H2", "H3", "H4", "I1", "I2", "I3", "I4", "I5")
 
 
+# Junk (Jc/Jmin/Jmax) and signature packets (I1-I5) are sent only by the initiator before its handshake and the
+# server drops them, so every client may have its own; S1-S4 and H1-H4 must match the server for all clients.
+AWG_CLIENT_ONLY = ("Jc", "Jmin", "Jmax", "I1", "I2", "I3", "I4", "I5")
+# What an HTTP/3 (QUIC v1) Initial from a browser looks like: long header with version 1, an 8-byte random DCID,
+# empty SCID and token, length 1182 covering the random packet number and payload — 1200 bytes, QUIC's minimum
+AWG_QUIC_I1 = "<b 0xc30000000108><r 8><b 0x0000449e><r 1182>"
+
+
 def awg_param_lines(s: dict) -> list[str]:
-    """Obfuscation parameters that are set (server and clients must use the same values)."""
+    """Obfuscation parameters that are set (the server's view)."""
     return [f"{k} = {s['awg_' + k.lower()]}" for k in AWG_PARAMS if s.get("awg_" + k.lower())]
+
+
+def awg_client_lines(s: dict) -> list[str]:
+    """Parameters for a new client config: the server's, with a realistic QUIC Initial as the signature packet
+    unless the admin chose to copy the server's own client-side values."""
+    if s.get("awg_client_profile", "quic") != "quic":
+        return awg_param_lines(s)
+    shared = [line for line in awg_param_lines(s) if not line.startswith(("I1 ", "I2 ", "I3 ", "I4 ", "I5 "))]
+    return [*shared, f"I1 = {AWG_QUIC_I1}"]
 
 
 class MTProto(Core):

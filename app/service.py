@@ -22,7 +22,7 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from cryptography.x509.oid import NameOID
 
 from . import config
-from .cores import AWG_PARAMS, XHTTP_CLIENT, AmneziaWG, Hysteria, MTProto, Xray, awg_param_lines
+from .cores import AWG_PARAMS, XHTTP_CLIENT, AmneziaWG, Hysteria, MTProto, Xray, awg_client_lines
 from .db import DB, wg_keypair
 
 log = logging.getLogger(__name__)
@@ -113,10 +113,13 @@ class Service:
     def regenerate_awg(self) -> None:
         """New server key and obfuscation parameters (all AmneziaWG configs must be re-issued)."""
         private, public = wg_keypair()
-        s1 = random.randint(15, 150)
-        s2 = random.choice([x for x in range(15, 151) if x != s1 + 56])  # sizes must not collide
+        while True:  # AmneziaWG 2.0: padded sizes of the four message types must all differ
+            s1, s2, s3, s4 = random.randint(15, 150), random.randint(15, 150), random.randint(15, 64), \
+                random.randint(0, 32)
+            if len({148 + s1, 92 + s2, 64 + s3, 32 + s4}) == 4:
+                break
         h = random.sample(range(5, 2 ** 31 - 1), 4)
-        params = {"jc": 4, "jmin": 40, "jmax": 70, "s1": s1, "s2": s2,
+        params = {"jc": 4, "jmin": 40, "jmax": 70, "s1": s1, "s2": s2, "s3": s3, "s4": s4,
                   "h1": h[0], "h2": h[1], "h3": h[2], "h4": h[3]}
         self.db.set("awg_private", private)
         self.db.set("awg_public", public)
@@ -268,7 +271,7 @@ class Service:
             return None
         s = self.settings()
         lines = ["[Interface]", f"PrivateKey = {user['awg_private']}", f"Address = {user['awg_ip']}/32",
-                 f"DNS = {config.AWG_DNS}", *awg_param_lines(s),
+                 f"DNS = {config.AWG_DNS}", *awg_client_lines(s),
                  "", "[Peer]", f"PublicKey = {s['awg_public']}",
                  *([f"PresharedKey = {user['awg_psk']}"] if user["awg_psk"] else []),
                  f"Endpoint = {self._host_for_url()}:{config.AWG_PORT}",
