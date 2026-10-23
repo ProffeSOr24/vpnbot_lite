@@ -11,7 +11,7 @@ from aiogram.types import BotCommand
 from aiohttp import web
 
 from . import config
-from .bot import send_backup, setup
+from .bot import setup
 from .service import Service
 from .sub import make_app
 
@@ -35,8 +35,8 @@ def sub_ssl_context() -> ssl.SSLContext | None:
 
 
 async def background(service: Service, bot: Bot, ssl_ctx: ssl.SSLContext | None) -> None:
-    """Every minute: account traffic and disable expired users. Once a day: send a backup, reload the cert."""
-    last_backup = last_cert_reload = time.time()
+    """Every minute: account traffic and disable expired users. Once a day: reload the subscription cert."""
+    last_cert_reload = time.time()
     while True:
         await asyncio.sleep(60)
         try:
@@ -44,10 +44,6 @@ async def background(service: Service, bot: Bot, ssl_ctx: ssl.SSLContext | None)
             disabled = await service.enforce_limits()
             if disabled:
                 await notify(bot, "⏸ Отключены пользователи:\n" + "\n".join(disabled))
-            if service.db.get("daily_backup", "1") == "1" and time.time() - last_backup > 86400:
-                last_backup = time.time()
-                for admin in config.ADMIN_IDS:
-                    await send_backup(service, bot, admin)
             if ssl_ctx and time.time() - last_cert_reload > 86400:
                 last_cert_reload = time.time()
                 ssl_ctx.load_cert_chain(config.SUB_CERT, config.SUB_KEY)  # pick up a renewed certificate
