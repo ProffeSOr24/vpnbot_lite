@@ -285,6 +285,31 @@ cmd_doctor() {
     ) 2>&1 | sed -E "$mask"
 }
 
+image_ref() {  # ghcr.io/<owner>/vpnbot-lite:<branch> — built by GitHub Actions from this repository
+    local remote branch owner
+    remote="$(git remote get-url origin 2>/dev/null || true)"
+    [[ "$remote" == *github.com* ]] || return 0
+    owner="$(echo "$remote" | sed -E 's#^(git@github.com:|https://github.com/)##; s#/.*##' | tr '[:upper:]' '[:lower:]')"
+    branch="$(git rev-parse --abbrev-ref HEAD | tr '/' '-')"
+    echo "ghcr.io/$owner/vpnbot-lite:$branch"
+}
+
+get_image() {
+    local image ver
+    image="$(env_get VPNBOT_IMAGE)"
+    if [ -n "$image" ] && [ "$image" != "vpnbot-lite:local" ] && docker compose pull -q vpnbot 2>/dev/null; then
+        ver="$(docker run --rm --entrypoint cat "$image" /srv/VERSION 2>/dev/null)"
+        if [ "$ver" = "$(cat VERSION)" ]; then
+            log "Скачан готовый образ $ver"
+            return
+        fi
+        log "Готовый образ ещё не обновился на GitHub (там ${ver:-?}, нужна $(cat VERSION)) — собираю сам"
+    else
+        log "Готового образа нет — собираю на сервере (10–20 минут)"
+    fi
+    docker compose build --pull
+}
+
 cmd_update() {
     rm -f data/update.request
     if [ -d .git ] || git rev-parse --git-dir >/dev/null 2>&1; then
@@ -296,8 +321,8 @@ cmd_update() {
         tune_kernel
         open_firewall
     fi
-    log "Пересобираю"
-    docker compose build --pull
+    [ -n "$(env_get VPNBOT_IMAGE)" ] || env_set VPNBOT_IMAGE "$(image_ref)"
+    get_image
     docker compose up -d
     docker image prune -f >/dev/null || true
     log "Обновлено до $(cat VERSION)"

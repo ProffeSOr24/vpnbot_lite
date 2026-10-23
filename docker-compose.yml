@@ -1,7 +1,8 @@
 services:
   vpnbot:
     build: .
-    image: vpnbot-lite:local
+    # a ready image from GitHub (see .github/workflows/vpnbot-lite-image.yml); built locally when unavailable
+    image: ${VPNBOT_IMAGE:-vpnbot-lite:local}
     container_name: vpnbot-lite
     restart: unless-stopped
     # host network: no NAT overhead, real client IPs, ports are opened directly on the server
