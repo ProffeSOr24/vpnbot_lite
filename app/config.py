@@ -19,6 +19,7 @@ XRAY_PORT = _int("XRAY_PORT", 443)
 HY2_PORT = _int("HY2_PORT", 443)
 XHTTP_PORT = _int("XHTTP_PORT", 8443)  # VLESS XHTTP + Reality; 0 disables
 SUB_PORT = _int("SUB_PORT", 2096)
+SUB_LISTEN = os.environ.get("SUB_LISTEN", "0.0.0.0").strip()  # 127.0.0.1 when Caddy serves HTTPS in front
 AWG_PORT = _int("AWG_PORT", 51820)
 MTPROTO_PORT = _int("MTPROTO_PORT", 8444)  # MTProto proxy for Telegram; 0 disables
 AWG_IFACE = "awg0"

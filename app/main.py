@@ -71,7 +71,7 @@ async def main() -> None:
     runner = web.AppRunner(make_app(service), access_log=None)
     await runner.setup()
     ssl_ctx = sub_ssl_context()
-    await web.TCPSite(runner, "0.0.0.0", config.SUB_PORT, ssl_context=ssl_ctx).start()
+    await web.TCPSite(runner, config.SUB_LISTEN, config.SUB_PORT, ssl_context=ssl_ctx).start()
     log.info("subscription server on %s:%s", "https" if ssl_ctx else "http", config.SUB_PORT)
 
     bot = Bot(config.BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))

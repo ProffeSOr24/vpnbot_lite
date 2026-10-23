@@ -2,7 +2,7 @@
 # VPN Bot Lite — установка и обслуживание.
 #   ./vpn.sh install [BOT_TOKEN] [ADMIN_ID]   установка (Docker, настройки ядра, автообновление)
 #   ./vpn.sh update                           обновить бота из git и пересобрать
-#   ./vpn.sh https [ПОРТ]                     подписки по https (бесплатный адрес IP.nip.io + Let's Encrypt)
+#   ./vpn.sh https [ПОРТ]                     подписки по https (бесплатный адрес IP.nip.io + Let's Encrypt; ПОРТ — публичный, например текущий 2097)
 #   ./vpn.sh https-cert CERT KEY              подписки по https с готовым сертификатом (например, от старого vpnbot)
 #   ./vpn.sh import-awg wg0|wg1 [--apply]     перенести AmneziaWG из старого vpnbot (без --apply — только проверка)
 #   ./vpn.sh restart | stop | status | logs
@@ -17,6 +17,7 @@ die() { printf '\033[1;31mОшибка:\033[0m %s\n' "$*" >&2; exit 1; }
 need_root() { [ "$(id -u)" -eq 0 ] || die "запустите от root (sudo $0 $*)"; }
 env_get() { grep -E "^$1=" .env 2>/dev/null | tail -1 | cut -d= -f2- || true; }
 env_port() { local v; v="$(env_get "$1")"; echo "${v:-$2}"; }  # env_port VAR default
+env_del() { sed -i "/^$1=/d" .env; }
 env_set() {
     if grep -qE "^$1=" .env; then sed -i "s|^$1=.*|$1=$2|" .env; else echo "$1=$2" >> .env; fi
 }
@@ -125,7 +126,8 @@ cmd_install() {
 
 cmd_https() {
     need_root "$@"
-    local ip domain port url
+    local ip domain port url old_url
+    old_url="$(env_get SUB_URL)"
     ip="$(env_get SERVER_HOST)"
     [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || ip="$(curl -4 -fsS --max-time 10 https://api.ipify.org)"
     domain="$(echo "$ip" | tr . -).nip.io"  # бесплатное имя, которое указывает на этот IP
@@ -137,6 +139,15 @@ cmd_https() {
         ss -ltnpH "sport = :80" || true
         die "освободите порт 80 (например, остановите старый vpnbot: cd /root/vpnbot && make d) и повторите"
     fi
+    # Caddy takes the public port; the bot's subscription server moves behind it (plain http on localhost).
+    # Keeping the public port keeps every subscription link the apps already have.
+    if [ "$port" = "$(env_port SUB_PORT 2096)" ]; then
+        if [ "$port" = 2096 ]; then env_set SUB_PORT 2095; else env_set SUB_PORT 2096; fi
+    fi
+    env_set SUB_LISTEN 127.0.0.1
+    env_del SUB_CERT
+    env_del SUB_KEY
+    env_del SUB_CERT_DIR
     env_set SUB_DOMAIN "$domain"
     env_set SUB_HTTPS_PORT "$port"
     env_set SUB_URL "$url"
@@ -150,8 +161,8 @@ cmd_https() {
     log "Получаю сертификат (до 2 минут)…"
     for _ in $(seq 24); do
         if curl -fsS --max-time 5 "$url/health" >/dev/null 2>&1; then
-            log "Готово! Подписки теперь открываются по $url/sub/…"
-            log "Новые ссылки — в боте: Пользователи → пользователь → Ключи и QR"
+            log "Готово! Подписки открываются по $url/sub/… (сертификат Let's Encrypt, продлевается сам)"
+            if [ "$url" != "$old_url" ]; then log "Адрес подписок изменился — новые ссылки в боте: Пользователи → Ключи и QR"; fi
             return
         fi
         sleep 5
