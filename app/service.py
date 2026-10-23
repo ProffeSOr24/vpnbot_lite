@@ -4,6 +4,7 @@ import base64
 import datetime
 import hashlib
 import ipaddress
+import json
 import logging
 import random
 import re
@@ -21,7 +22,7 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from cryptography.x509.oid import NameOID
 
 from . import config
-from .cores import AWG_PARAMS, AmneziaWG, Hysteria, MTProto, Xray, awg_param_lines
+from .cores import AWG_PARAMS, XHTTP_CLIENT, AmneziaWG, Hysteria, MTProto, Xray, awg_param_lines
 from .db import DB, wg_keypair
 
 log = logging.getLogger(__name__)
@@ -216,7 +217,8 @@ class Service:
 
     def xhttp_link(self, user) -> str:
         s = self.settings()
-        params = {"type": "xhttp", "path": s["xhttp_path"], "mode": "packet-up", **self._reality_params(s)}
+        params = {"type": "xhttp", "path": s["xhttp_path"], "mode": "packet-up",
+                  "extra": json.dumps(XHTTP_CLIENT, separators=(",", ":")), **self._reality_params(s)}
         return (f"vless://{user['uuid']}@{self._host_for_url()}:{config.XHTTP_PORT}"
                 f"?{urlencode(params)}#{quote(user['name'] + ' XHTTP')}")
 

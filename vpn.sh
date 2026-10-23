@@ -5,6 +5,7 @@
 #   ./vpn.sh https [ПОРТ]                     подписки по https (бесплатный адрес IP.nip.io + Let's Encrypt; ПОРТ — публичный, например текущий 2097)
 #   ./vpn.sh https-cert CERT KEY              подписки по https с готовым сертификатом (например, от старого vpnbot)
 #   ./vpn.sh import-awg wg0|wg1 [--apply]     перенести AmneziaWG из старого vpnbot (без --apply — только проверка)
+#   ./vpn.sh doctor                           вся диагностика одним выводом (без секретов) — пришлите его целиком
 #   ./vpn.sh restart | stop | status | logs
 set -euo pipefail
 
@@ -239,6 +240,51 @@ cmd_import_awg() {
     log "Готово: AmneziaWG на порту $port/udp. Роутеры и телефоны со старыми конфигами переподключатся сами."
 }
 
+cmd_doctor() {
+    # everything usually asked for when something breaks; secrets are masked
+    local mask='s/(secret=|PrivateKey *= *|PresharedKey *= *|password[=:] *|BOT_TOKEN=)[^ &"]+/\1<скрыто>/Ig'
+    section() { printf '\n===== %s =====\n' "$1"; }
+    (
+        set +e +o pipefail  # show everything even when some checks fail
+        section "Версия"
+        echo "бот $(cat VERSION), git $(git log -1 --format='%h %cd' --date=short 2>/dev/null)"
+        section "Контейнеры"
+        docker compose ps --format '{{.Name}}: {{.Status}}' 2>&1
+        section "Настройки (.env без токена и ID)"
+        grep -vE '^(BOT_TOKEN|ADMIN_IDS)=' .env
+        section "Порты"
+        ss -ltnupH 2>/dev/null | grep -E "xray|hysteria|amneziawg|telemt|caddy|python" | awk '{print $1, $5, $7}'
+        section "Ядра"
+        docker exec vpnbot-lite sh -c 'for b in xray hysteria telemt amneziawg-go; do
+            p=/data/bin/$b; [ -x "$p" ] || p=/opt/bin/$b
+            printf "%s: " "$b"; case $b in xray) $p version | head -1;; hysteria) $p version | grep -i "^version";;
+            *) $p --version 2>&1 | head -1;; esac; done' 2>&1
+        section "AmneziaWG"
+        docker exec vpnbot-lite sh -c 'now=$(date +%s); /opt/bin/awg show awg0 latest-handshakes 2>&1 |
+            awk -v now="$now" "NF == 2 && \$2 ~ /^[0-9]+\$/ {n++; if (\$2 > 0 && now - \$2 < 180) a++} END {print n+0, \"клиентов, на связи за 3 минуты:\", a+0}"' 2>&1
+        echo "ip_forward=$(cat /proc/sys/net/ipv4/ip_forward), congestion=$(cat /proc/sys/net/ipv4/tcp_congestion_control)"
+        section "Сертификат подписки"
+        if [ -n "$(env_get SUB_DOMAIN)" ]; then
+            echo | openssl s_client -connect "127.0.0.1:$(env_port SUB_HTTPS_PORT 2443)" \
+                -servername "$(env_get SUB_DOMAIN)" 2>/dev/null | openssl x509 -noout -issuer -enddate 2>&1
+        else
+            echo "https для подписок не включён (./vpn.sh https)"
+        fi
+        section "Система"
+        uptime
+        free -h | head -2
+        df -h / | tail -1
+        timedatectl 2>/dev/null | grep -E "Universal time|synchronized"
+        section "Лог бота (последние 30 строк)"
+        docker compose logs --tail 30 --no-log-prefix vpnbot 2>&1
+        for f in data/logs/*.log; do
+            [ -f "$f" ] || continue
+            section "Лог $(basename "$f" .log) (последние 20 строк)"
+            tail -n 20 "$f"
+        done
+    ) 2>&1 | sed -E "$mask"
+}
+
 cmd_update() {
     rm -f data/update.request
     if [ -d .git ] || git rev-parse --git-dir >/dev/null 2>&1; then
@@ -262,10 +308,11 @@ case "${1:-}" in
     update) cmd_update ;;
     https) shift; cmd_https "$@" ;;
     https-cert) shift; cmd_https_cert "$@" ;;
+    doctor) cmd_doctor ;;
     import-awg) shift; cmd_import_awg "$@" ;;
     restart) docker compose restart ;;
     stop) docker compose down ;;
     status) docker compose ps ;;
     logs) docker compose logs -f --tail=200 ;;
-    *) sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+    *) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

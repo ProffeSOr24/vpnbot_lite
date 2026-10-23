@@ -58,6 +58,26 @@ def plain_version(tag: str | None) -> str | None:
     return m.group(1) if m else tag
 
 
+class LogBuffer(collections.deque):
+    """Recent lines in memory for the bot, also written to data/logs/<name>.log for `vpn.sh doctor`."""
+    MAX_FILE = 512 * 1024
+
+    def __init__(self, name: str):
+        super().__init__(maxlen=300)
+        self.path = config.DATA_DIR / "logs" / f"{name}.log"
+
+    def append(self, line: str) -> None:
+        super().append(line)
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            if self.path.exists() and self.path.stat().st_size > self.MAX_FILE:
+                os.replace(self.path, self.path.with_suffix(".log.1"))
+            with self.path.open("a") as f:
+                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {line}\n")
+        except OSError:
+            pass  # logs must never break a core
+
+
 class Core:
     name = ""
     repo = ""
@@ -66,7 +86,7 @@ class Core:
 
     def __init__(self):
         self.proc: asyncio.subprocess.Process | None = None
-        self.logs: collections.deque[str] = collections.deque(maxlen=300)
+        self.logs = LogBuffer(self.name)
         self.wanted = False          # should the process be running
         self.started_at = 0.0
         self._lock = asyncio.Lock()
@@ -322,7 +342,8 @@ class Xray(Core):
                 "protocol": "vless",
                 "settings": {"clients": [{"id": u["uuid"], "email": u["name"]} for u in users],
                              "decryption": "none"},
-                "streamSettings": {"network": "xhttp", "xhttpSettings": {"path": s["xhttp_path"], "mode": "auto"},
+                "streamSettings": {"network": "xhttp", "xhttpSettings": {"path": s["xhttp_path"], "mode": "auto",
+                                                                          **XHTTP_SERVER},
                                    "security": "reality", "realitySettings": reality},
                 "sniffing": sniffing,
             })
@@ -536,6 +557,15 @@ class AmneziaWG(Core):
             result[names[parts[0]]] = [rx - prev_rx, tx - prev_tx]
         return result
 
+
+# XHTTP shaping as in the old vpnbot setup that works on the target network: random padding in every request,
+# bounded POST sizes/intervals and connection reuse, so traffic does not form one recognisable long stream
+XHTTP_SERVER = {"xPaddingBytes": "100-1000", "noSSEHeader": True, "scMaxBufferedPosts": 30,
+                "scMaxEachPostBytes": 1000000, "scStreamUpServerSecs": "20-80"}
+XHTTP_CLIENT = {"xPaddingBytes": "100-1000", "noGRPCHeader": False, "scMaxEachPostBytes": 1000000,
+                "scMinPostsIntervalMs": 30, "scStreamUpServerSecs": "20-80",
+                "xmux": {"maxConcurrency": "16-32", "maxConnections": 0, "cMaxReuseTimes": 0,
+                         "hMaxRequestTimes": "600-900", "hMaxReusableSecs": "1800-3000", "hKeepAlivePeriod": 0}}
 
 # AmneziaWG 1.0: Jc/Jmin/Jmax/S1/S2/H1-H4; 2.0 adds S3/S4 padding and I1-I5 signature packets
 AWG_PARAMS = ("Jc", "Jmin", "Jmax", "S1", "S2", "S3", "S4", "H1", "H2", "H3", "H4", "I1", "I2", "I3", "I4", "I5")
