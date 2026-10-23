@@ -4,6 +4,7 @@
 #   ./vpn.sh update                           обновить бота из git и пересобрать
 #   ./vpn.sh https [ПОРТ]                     подписки по https (бесплатный адрес IP.nip.io + Let's Encrypt)
 #   ./vpn.sh https-cert CERT KEY              подписки по https с готовым сертификатом (например, от старого vpnbot)
+#   ./vpn.sh import-awg wg0|wg1 [--apply]     перенести AmneziaWG из старого vpnbot (без --apply — только проверка)
 #   ./vpn.sh restart | stop | status | logs
 set -euo pipefail
 
@@ -186,6 +187,47 @@ cmd_https_cert() {
     echo "Не отвечает по https. Логи: ./vpn.sh logs"
 }
 
+cmd_import_awg() {
+    need_root "$@"
+    local src="${1:-}" mode="${2:-}" old=/root/vpnbot/config conf clients out port subnet
+    case "$src" in
+        wg0) conf="$old/wg0.conf"; clients="$old/clients.json" ;;
+        wg1) conf="$old/wg1.conf"; clients="$old/clients1.json" ;;
+        *) die "укажите, что переносить: ./vpn.sh import-awg wg0 (порт 51820) или wg1 (порт 51821)" ;;
+    esac
+    [ -s "$conf" ] || die "не найден $conf"
+    mkdir -p data/import
+    cp "$conf" data/import/server.conf
+    if [ -s "$clients" ]; then cp "$clients" data/import/clients.json; else rm -f data/import/clients.json; fi
+    trap 'rm -rf "$DIR/data/import"' EXIT  # keys must not stay lying around
+
+    log "Читаю $conf"
+    out="$(docker compose run --rm --no-deps -T --name vpnbot-lite-import vpnbot python -m app.import_awg \
+        /data/import/server.conf /data/import/clients.json)" || { echo "$out"; die "не удалось прочитать конфиг"; }
+    echo "$out" | grep -v '^ENV '
+    port="$(echo "$out" | sed -n 's/^ENV AWG_PORT=//p')"
+    subnet="$(echo "$out" | sed -n 's/^ENV AWG_SUBNET=//p')"
+    if [ "$mode" != "--apply" ]; then
+        echo
+        echo "Это проверка, ничего не изменено. Чтобы перенести: ./vpn.sh import-awg $src --apply"
+        return
+    fi
+
+    if ss -lunpH "sport = :$port" 2>/dev/null | grep -v amneziawg | grep -q .; then
+        ss -lunpH "sport = :$port"
+        die "порт $port/udp занят (старый бот ещё работает?) — остановите его: cd /root/vpnbot && make d"
+    fi
+    log "Переношу (бот перезапустится)"
+    env_set AWG_PORT "$port"
+    env_set AWG_SUBNET "$subnet"
+    docker compose stop vpnbot
+    docker compose run --rm --no-deps -T --name vpnbot-lite-import vpnbot python -m app.import_awg \
+        /data/import/server.conf /data/import/clients.json --apply | grep -v '^ENV '
+    docker compose up -d vpnbot
+    if command -v ufw >/dev/null && ufw status | grep -q "Status: active"; then ufw allow "$port/udp"; fi
+    log "Готово: AmneziaWG на порту $port/udp. Роутеры и телефоны со старыми конфигами переподключатся сами."
+}
+
 cmd_update() {
     rm -f data/update.request
     if [ -d .git ] || git rev-parse --git-dir >/dev/null 2>&1; then
@@ -209,9 +251,10 @@ case "${1:-}" in
     update) cmd_update ;;
     https) shift; cmd_https "$@" ;;
     https-cert) shift; cmd_https_cert "$@" ;;
+    import-awg) shift; cmd_import_awg "$@" ;;
     restart) docker compose restart ;;
     stop) docker compose down ;;
     status) docker compose ps ;;
     logs) docker compose logs -f --tail=200 ;;
-    *) sed -n '2,7p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+    *) sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

@@ -422,6 +422,7 @@ class AmneziaWG(Core):
     def __init__(self):
         super().__init__()
         self._last: dict[str, tuple[int, int]] = {}
+        self.dns_redirect: list[str] = []  # DNS servers of imported clients that only existed on the old server
 
     @property
     def config_path(self) -> Path:
@@ -449,11 +450,13 @@ class AmneziaWG(Core):
         return m.group(1) if m else None
 
     def write_config(self, users, s: dict) -> None:
+        self.dns_redirect = [ip for ip in (s.get("awg_dns_redirect") or "").split(",") if ip]
         lines = ["[Interface]", f"PrivateKey = {s['awg_private']}", f"ListenPort = {config.AWG_PORT}",
-                 *(f"{k} = {s['awg_' + k.lower()]}" for k in AWG_PARAMS)]
+                 *awg_param_lines(s)]
         for u in users:
             lines += ["", "[Peer]", f"# {u['name']}", f"PublicKey = {u['awg_public']}",
-                      f"PresharedKey = {u['awg_psk']}", f"AllowedIPs = {u['awg_ip']}/32"]
+                      *([f"PresharedKey = {u['awg_psk']}"] if u["awg_psk"] else []),
+                      f"AllowedIPs = {u['awg_ip']}/32"]
         self.config_path.write_text("\n".join(lines) + "\n")
         self.config_path.chmod(0o600)
 
@@ -470,7 +473,11 @@ class AmneziaWG(Core):
     def _rules(self) -> list[tuple[str, str, list[str]]]:
         i = config.AWG_IFACE
         clamp = ["-p", "tcp", "--tcp-flags", "SYN,RST", "SYN", "-j", "TCPMSS", "--clamp-mss-to-pmtu"]
+        dns = [("nat", "PREROUTING", ["-i", i, "-d", ip, "-p", proto, "--dport", "53",
+                                      "-j", "DNAT", "--to-destination", "1.1.1.1:53"])
+               for ip in self.dns_redirect for proto in ("udp", "tcp")]
         return [
+            *dns,
             ("nat", "POSTROUTING", ["-s", config.AWG_SUBNET, "!", "-o", i, "-j", "MASQUERADE"]),
             ("filter", "FORWARD", ["-i", i, "-j", "ACCEPT"]),
             ("filter", "FORWARD", ["-o", i, "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT"]),
@@ -530,7 +537,13 @@ class AmneziaWG(Core):
         return result
 
 
-AWG_PARAMS = ("Jc", "Jmin", "Jmax", "S1", "S2", "H1", "H2", "H3", "H4")
+# AmneziaWG 1.0: Jc/Jmin/Jmax/S1/S2/H1-H4; 2.0 adds S3/S4 padding and I1-I5 signature packets
+AWG_PARAMS = ("Jc", "Jmin", "Jmax", "S1", "S2", "S3", "S4", "H1", "H2", "H3", "H4", "I1", "I2", "I3", "I4", "I5")
+
+
+def awg_param_lines(s: dict) -> list[str]:
+    """Obfuscation parameters that are set (server and clients must use the same values)."""
+    return [f"{k} = {s['awg_' + k.lower()]}" for k in AWG_PARAMS if s.get("awg_" + k.lower())]
 
 
 class MTProto(Core):

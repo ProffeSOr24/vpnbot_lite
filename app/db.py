@@ -109,13 +109,13 @@ class DB:
         """Give every user AmneziaWG keys and a tunnel address (server takes the first host)."""
         net = ipaddress.ip_network(subnet, strict=False)
         hosts = [str(h) for h in net.hosts()][1:]
-        users = self.conn.execute("SELECT id, awg_private, awg_ip FROM users ORDER BY id").fetchall()
+        users = self.conn.execute("SELECT id, awg_public, awg_ip FROM users ORDER BY id").fetchall()
         taken = {u["awg_ip"] for u in users if u["awg_ip"] in hosts}
         free = (h for h in hosts if h not in taken)
         seen: set[str] = set()
         for u in users:
             fields = {}
-            if not u["awg_private"]:
+            if not u["awg_public"]:  # imported clients may have only the public key
                 fields["awg_private"], fields["awg_public"] = wg_keypair()
                 fields["awg_psk"] = wg_psk()
             ip = u["awg_ip"]

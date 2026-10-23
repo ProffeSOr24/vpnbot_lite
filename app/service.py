@@ -21,7 +21,7 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from cryptography.x509.oid import NameOID
 
 from . import config
-from .cores import AWG_PARAMS, AmneziaWG, Hysteria, MTProto, Xray
+from .cores import AWG_PARAMS, AmneziaWG, Hysteria, MTProto, Xray, awg_param_lines
 from .db import DB, wg_keypair
 
 log = logging.getLogger(__name__)
@@ -119,6 +119,8 @@ class Service:
                   "h1": h[0], "h2": h[1], "h3": h[2], "h4": h[3]}
         self.db.set("awg_private", private)
         self.db.set("awg_public", public)
+        for k in AWG_PARAMS:  # drop 2.0 values left from an import, they belong to the old key
+            self.db.conn.execute("DELETE FROM settings WHERE key=?", (f"awg_{k.lower()}",))
         for k, v in params.items():
             self.db.set(f"awg_{k}", str(v))
 
@@ -258,11 +260,15 @@ class Service:
         return (f"https://t.me/proxy?server={self.host}&port={config.MTPROTO_PORT}"
                 f"&secret={self.db.get('mtproto_secret')}")
 
-    def awg_conf(self, user) -> str:
+    def awg_conf(self, user) -> str | None:
+        """Client config; None for clients imported without their private key."""
+        if not user["awg_private"]:
+            return None
         s = self.settings()
         lines = ["[Interface]", f"PrivateKey = {user['awg_private']}", f"Address = {user['awg_ip']}/32",
-                 f"DNS = {config.AWG_DNS}", *(f"{k} = {s['awg_' + k.lower()]}" for k in AWG_PARAMS),
-                 "", "[Peer]", f"PublicKey = {s['awg_public']}", f"PresharedKey = {user['awg_psk']}",
+                 f"DNS = {config.AWG_DNS}", *awg_param_lines(s),
+                 "", "[Peer]", f"PublicKey = {s['awg_public']}",
+                 *([f"PresharedKey = {user['awg_psk']}"] if user["awg_psk"] else []),
                  f"Endpoint = {self._host_for_url()}:{config.AWG_PORT}",
                  "AllowedIPs = 0.0.0.0/0", "PersistentKeepalive = 25"]
         return "\n".join(lines) + "\n"

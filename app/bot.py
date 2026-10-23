@@ -186,6 +186,10 @@ def setup(service: Service) -> Router:
             await cb.answer("AmneziaWG выключен в настройках", show_alert=True)
             return
         conf = service.awg_conf(u)
+        if conf is None:
+            await cb.answer("Конфиг перенесён со старого сервера без приватного ключа — "
+                            "файл у клиента уже есть, новый выдать нельзя", show_alert=True)
+            return
         await cb.message.answer_document(
             BufferedInputFile(conf.encode(), f"{u['name']}.conf"),
             caption=f"📡 AmneziaWG для <b>{html.escape(u['name'])}</b>\n"
