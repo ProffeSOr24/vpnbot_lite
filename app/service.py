@@ -312,12 +312,13 @@ class Service:
 
     def awg_conf(self, user, router: bool = False) -> str | None:
         """Client config; None for clients imported without their private key.
-        Routers (Keenetic/Netcraze firmware) reject the QUIC-like I1 with several <b>/<r> tags: they get the
-        server's own parameters, which their firmware already accepts."""
+        Routers: Keenetic/Netcraze firmware answers «invalid I1 value» to signature packets, so their config has
+        no I1–I5 at all — those are sent by the client only, the server doesn't need them."""
         if not user["awg_private"]:
             return None
         s = self.settings()
-        params = awg_param_lines(s) if router else awg_client_lines(s)
+        params = [line for line in awg_param_lines(s) if not line.startswith(("I1 ", "I2 ", "I3 ", "I4 ", "I5 "))] \
+            if router else awg_client_lines(s)
         lines = ["[Interface]", f"PrivateKey = {user['awg_private']}", f"Address = {user['awg_ip']}/32",
                  f"DNS = {config.AWG_DNS}", *params,
                  "", "[Peer]", f"PublicKey = {s['awg_public']}",
