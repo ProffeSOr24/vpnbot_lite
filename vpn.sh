@@ -3,7 +3,7 @@
 #   ./vpn.sh install [BOT_TOKEN] [ADMIN_ID]   установка (Docker, настройки ядра, автообновление)
 #   ./vpn.sh update                           обновить бота из git и пересобрать
 #   ./vpn.sh https [ПОРТ]                     подписки по https (бесплатный адрес IP.nip.io + Let's Encrypt; ПОРТ — публичный, например текущий 2097)
-#   ./vpn.sh ddns ИМЯ ТОКЕН                  свой адрес ИМЯ.duckdns.org вместо IP — при смене IP устройства менять не нужно
+#   ./vpn.sh ddns ИМЯ ТОКЕН [IP]                              свой адрес ИМЯ.duckdns.org вместо IP — при смене IP устройства менять не нужно
 #   ./vpn.sh stealth [off]                   максимальная маскировка: VLESS на 443/8443, SNI = свой домен, сайт-приманка
 #   ./vpn.sh https-cert CERT KEY              подписки по https с готовым сертификатом (например, от старого vpnbot)
 #   ./vpn.sh import-awg wg0|wg1 [--apply]     перенести AmneziaWG из старого vpnbot (без --apply — только проверка)
@@ -182,10 +182,16 @@ cmd_https() {
 
 cmd_ddns() {
     need_root "$@"
-    [ $# -ge 2 ] || die "использование: ./vpn.sh ddns ИМЯ ТОКЕН (имя и токен — на duckdns.org после входа)"
-    local name="${1%.duckdns.org}" token="$2" ip answer domain
+    [ $# -ge 2 ] || die "использование: ./vpn.sh ddns ИМЯ ТОКЕН [IP] (имя и токен — на duckdns.org; IP — если у сервера их несколько)"
+    local name="${1%.duckdns.org}" token="$2" ip="${3:-}" answer domain
     domain="$name.duckdns.org"
-    ip="$(curl -4 -fsS --max-time 10 https://api.ipify.org)" || die "не удалось узнать внешний IP"
+    if [ -n "$ip" ]; then
+        hostname -I | tr ' ' '\n' | grep -qx "$ip" || die "IP $ip не найден на этом сервере (hostname -I: $(hostname -I))"
+        env_set DDNS_IP "$ip"   # клиентам — этот адрес, даже если сервер выходит в интернет с другого
+    else
+        env_del DDNS_IP
+        ip="$(curl -4 -fsS --max-time 10 https://api.ipify.org)" || die "не удалось узнать внешний IP"
+    fi
     answer="$(curl -fsS --max-time 15 "https://www.duckdns.org/update?domains=$name&token=$token&ip=$ip" || true)"
     [ "$answer" = OK ] || die "DuckDNS ответил «${answer:-нет ответа}» — проверьте имя и токен на duckdns.org"
     log "$domain → $ip"

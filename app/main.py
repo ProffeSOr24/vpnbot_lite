@@ -43,7 +43,7 @@ async def keep_reachable(service: Service, bot: Bot) -> None:
         while True:
             try:
                 if config.DDNS_DOMAIN and config.DDNS_TOKEN:
-                    ip = await watch.public_ip(session)
+                    ip = config.DDNS_IP or await watch.public_ip(session)
                     if ip and ip != service.db.get("ddns_ip"):
                         if await watch.duckdns_update(session, config.DDNS_DOMAIN, config.DDNS_TOKEN, ip):
                             old = service.db.get("ddns_ip")

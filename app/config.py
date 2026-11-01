@@ -39,6 +39,9 @@ DECOY_PORT = _int("DECOY_PORT", 9443)
 # DuckDNS: the bot keeps <name>.duckdns.org pointed at the server, so a new IP needs no changes on devices
 DDNS_DOMAIN = os.environ.get("DDNS_DOMAIN", "").strip()
 DDNS_TOKEN = os.environ.get("DDNS_TOKEN", "").strip()
+# the IP clients should use when the server has several (e.g. an extra IP bought because the main one is blocked);
+# empty — the server's outgoing IP
+DDNS_IP = os.environ.get("DDNS_IP", "").strip()
 
 XRAY_API = "127.0.0.1:10085"
 HY2_STATS = "127.0.0.1:10086"
