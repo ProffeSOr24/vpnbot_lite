@@ -125,6 +125,8 @@ def setup(service: Service) -> Router:
             b.button(text=f"{service.user_status(u)} {u['name']} · {used}", callback_data=f"u:{u['id']}")
         b.adjust(1)
         b.row(*kb([("➕ Добавить", "add"), *BACK]).inline_keyboard[0])
+        if db.users():
+            b.row(*kb([("🗑 Удалить всех", "delall")]).inline_keyboard[0])
         text = "<b>Пользователи</b>\n✅ активен  ⏳ скоро истекает  ⏸ отключён"
         await show(target, text, b.as_markup())
 
@@ -232,6 +234,30 @@ def setup(service: Service) -> Router:
             db.delete_user(u["id"])
             await apply(cb)
             await users_list(cb)
+
+    @router.callback_query(F.data == "delall")
+    async def users_delete_all(cb: CallbackQuery) -> None:
+        count = len(db.users())
+        await show(cb, f"⚠️ Удалить <b>всех пользователей ({count})</b>?\n\n"
+                       "У всех перестанут работать ключи VLESS и конфиги AmneziaWG, включая роутеры. "
+                       "Перед удалением бот пришлёт файл бэкапа — из него можно всё восстановить.",
+                   kb([(f"🗑 Да, удалить всех {count}", "delall2")], [("Отмена", "users")]))
+
+    @router.callback_query(F.data == "delall2")
+    async def users_delete_all_confirm(cb: CallbackQuery) -> None:
+        await show(cb, "Точно? Это действие нельзя отменить кнопкой — только восстановлением из бэкапа.",
+                   kb([("🗑 Удалить окончательно", "delallok")], [("Отмена", "users")]))
+
+    @router.callback_query(F.data == "delallok")
+    async def users_delete_all_ok(cb: CallbackQuery) -> None:
+        await cb.answer("Делаю бэкап и удаляю…")
+        await send_backup(service, cb.bot, cb.from_user.id)  # first a way back
+        users = db.users()
+        for u in users:
+            db.delete_user(u["id"])
+        await apply(cb)
+        await cb.message.answer(f"🗑 Удалено пользователей: {len(users)}. Восстановить — отправьте боту файл бэкапа выше.")
+        await users_list(cb.message)
 
     @router.callback_query(F.data.startswith("days:"))
     async def user_days(cb: CallbackQuery, state: FSMContext) -> None:
