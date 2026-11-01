@@ -120,18 +120,31 @@ def setup(service: Service) -> Router:
     # ---------- users ----------
     ICON = {"both": "🔗📡", "vless": "🔗", "awg": "📡"}
 
-    async def users_list(target: Message | CallbackQuery, only: str = "") -> None:
+    PAGE = 7
+    views: dict[int, tuple[str, int]] = {}  # admin -> (filter, page): back from a card returns to the same page
+
+    async def users_list(target: Message | CallbackQuery, only: str | None = None, page: int | None = None) -> None:
+        viewer = target.from_user.id if target.from_user else 0
+        last_only, last_page = views.get(viewer, ("", 0))
+        only = last_only if only is None else only
+        page = (last_page if only == last_only else 0) if page is None else page
         everyone = db.users()
         shown = [u for u in everyone if not only or uses(u, only)]
         shown.sort(key=lambda u: (list(ICON).index(u["proto"]), u["name"].lower()))
+        pages = max(1, -(-len(shown) // PAGE))
+        page = min(max(page, 0), pages - 1)
+        views[viewer] = (only, page)
         b = InlineKeyboardBuilder()
-        for u in shown:
+        for u in shown[page * PAGE:(page + 1) * PAGE]:
             used = fmt_bytes(u["up"] + u["down"])
             b.button(text=f"{service.user_status(u)} {ICON[u['proto']]} {u['name']} · {used}",
                      callback_data=f"u:{u['id']}")
         b.adjust(1)
+        if pages > 1:
+            b.row(*kb([("◀️", f"up:{page - 1}" if page else "noop"), (f"{page + 1} / {pages}", "noop"),
+                       ("▶️", f"up:{page + 1}" if page < pages - 1 else "noop")]).inline_keyboard[0])
         mark = lambda key: "• " if only == key else ""  # noqa: E731
-        b.row(*kb([(f"{mark('')}Все", "users"), (f"{mark('vless')}🔗 VLESS", "uf:vless"),
+        b.row(*kb([(f"{mark('')}Все", "uf:"), (f"{mark('vless')}🔗 VLESS", "uf:vless"),
                    (f"{mark('awg')}📡 AmneziaWG", "uf:awg")]).inline_keyboard[0])
         b.row(*kb([("➕ Добавить", "add"), *BACK]).inline_keyboard[0])
         if everyone:
@@ -140,6 +153,7 @@ def setup(service: Service) -> Router:
         text = ("<b>Пользователи</b>\n"
                 f"🔗📡 VLESS + AmneziaWG: {counts['both']}   🔗 только VLESS: {counts['vless']}   "
                 f"📡 только AmneziaWG: {counts['awg']}\n"
+                + (f"Показано: {len(shown)} из {len(everyone)}\n" if only else "") +
                 "✅ активен  ⏳ скоро истекает  ⏸ отключён")
         await show(target, text, b.as_markup())
 
@@ -150,7 +164,15 @@ def setup(service: Service) -> Router:
 
     @router.callback_query(F.data.startswith("uf:"))
     async def users_filtered(cb: CallbackQuery) -> None:
-        await users_list(cb, cb.data[3:])
+        await users_list(cb, cb.data[3:], 0)
+
+    @router.callback_query(F.data.startswith("up:"))
+    async def users_page(cb: CallbackQuery) -> None:
+        await users_list(cb, page=int(cb.data[3:]))
+
+    @router.callback_query(F.data == "noop")
+    async def noop(cb: CallbackQuery) -> None:
+        await cb.answer()
 
     @router.callback_query(F.data == "protoall")
     async def users_proto_all(cb: CallbackQuery) -> None:
