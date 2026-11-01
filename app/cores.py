@@ -9,6 +9,7 @@ import os
 import platform
 import re
 import shutil
+import socket
 import stat
 import tarfile
 import tempfile
@@ -17,7 +18,6 @@ import zipfile
 from pathlib import Path
 
 import aiohttp
-import socket
 
 from . import config
 
