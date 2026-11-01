@@ -22,7 +22,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from . import config, watch
 from .cores import latest_tag, plain_version
-from .service import Service, fmt_bytes
+from .service import PROTOS, Service, fmt_bytes, uses
 from .sub import qr_png
 
 NAME_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,32}$")
@@ -118,21 +118,56 @@ def setup(service: Service) -> Router:
         await message.answer("Отменено.", reply_markup=menu_markup())
 
     # ---------- users ----------
-    async def users_list(target: Message | CallbackQuery) -> None:
+    ICON = {"both": "🔗📡", "vless": "🔗", "awg": "📡"}
+
+    async def users_list(target: Message | CallbackQuery, only: str = "") -> None:
+        everyone = db.users()
+        shown = [u for u in everyone if not only or uses(u, only)]
+        shown.sort(key=lambda u: (list(ICON).index(u["proto"]), u["name"].lower()))
         b = InlineKeyboardBuilder()
-        for u in db.users():
+        for u in shown:
             used = fmt_bytes(u["up"] + u["down"])
-            b.button(text=f"{service.user_status(u)} {u['name']} · {used}", callback_data=f"u:{u['id']}")
+            b.button(text=f"{service.user_status(u)} {ICON[u['proto']]} {u['name']} · {used}",
+                     callback_data=f"u:{u['id']}")
         b.adjust(1)
+        mark = lambda key: "• " if only == key else ""  # noqa: E731
+        b.row(*kb([(f"{mark('')}Все", "users"), (f"{mark('vless')}🔗 VLESS", "uf:vless"),
+                   (f"{mark('awg')}📡 AmneziaWG", "uf:awg")]).inline_keyboard[0])
         b.row(*kb([("➕ Добавить", "add"), *BACK]).inline_keyboard[0])
-        if db.users():
-            b.row(*kb([("🗑 Удалить всех", "delall")]).inline_keyboard[0])
-        text = "<b>Пользователи</b>\n✅ активен  ⏳ скоро истекает  ⏸ отключён"
+        if everyone:
+            b.row(*kb([("🔁 Доступ для всех", "protoall"), ("🗑 Удалить всех", "delall")]).inline_keyboard[0])
+        counts = {k: sum(1 for u in everyone if u["proto"] == k) for k in ICON}
+        text = ("<b>Пользователи</b>\n"
+                f"🔗📡 VLESS + AmneziaWG: {counts['both']}   🔗 только VLESS: {counts['vless']}   "
+                f"📡 только AmneziaWG: {counts['awg']}\n"
+                "✅ активен  ⏳ скоро истекает  ⏸ отключён")
         await show(target, text, b.as_markup())
 
     @router.callback_query(F.data == "users")
     async def users(cb: CallbackQuery, state: FSMContext) -> None:
         await state.clear()
+        await users_list(cb)
+
+    @router.callback_query(F.data.startswith("uf:"))
+    async def users_filtered(cb: CallbackQuery) -> None:
+        await users_list(cb, cb.data[3:])
+
+    @router.callback_query(F.data == "protoall")
+    async def users_proto_all(cb: CallbackQuery) -> None:
+        await show(cb, "Какой доступ дать <b>всем</b> пользователям? Потом можно поменять у любого в карточке.\n\n"
+                       "У кого доступ пропадёт, у того перестанут работать соответствующие ключи "
+                       "(VLESS-подписка или конфиг AmneziaWG).",
+                   kb(*[[(title, f"pa:{key}")] for key, title in PROTOS.items()], [("Отмена", "users")]))
+
+    @router.callback_query(F.data.startswith("pa:"))
+    async def users_proto_all_ok(cb: CallbackQuery) -> None:
+        proto = cb.data[3:]
+        if proto not in PROTOS:
+            return
+        for u in db.users():
+            db.update_user(u["id"], proto=proto)
+        await cb.answer(f"Всем: {PROTOS[proto]}")
+        await apply(cb)
         await users_list(cb)
 
     def user_card(u) -> tuple[str, InlineKeyboardMarkup]:
@@ -142,9 +177,13 @@ def setup(service: Service) -> Router:
                 f"Срок: {fmt_date(u['expire_at'])}\n"
                 f"Трафик: ↑{fmt_bytes(u['up'])} ↓{fmt_bytes(u['down'])} = "
                 f"<b>{fmt_bytes(u['up'] + u['down'])}</b> / {limit}\n"
-                f"Создан: {fmt_date(u['created_at'])}")
+                f"Создан: {fmt_date(u['created_at'])}\n"
+                f"Доступ: {PROTOS[u['proto']]}")
         i = u["id"]
-        markup = kb([("🔗 Ключи и QR", f"links:{i}"), ("📡 AmneziaWG (роутер)", f"awg:{i}")],
+        get = [b for b in (("🔗 Ключи и QR", f"links:{i}") if uses(u, "vless") else None,
+                           ("📡 AmneziaWG", f"awg:{i}") if uses(u, "awg") else None) if b]
+        markup = kb(get, [("🔁 Доступ: " + {"both": "оба", "vless": "VLESS", "awg": "AmneziaWG"}[u["proto"]],
+                           f"proto:{i}")],
                     [("⏸ Отключить" if u["enabled"] else "▶️ Включить", f"toggle:{i}"),
                      ("📅 Срок", f"days:{i}"), ("📦 Лимит", f"limit:{i}")],
                     [("🔄 Сбросить трафик", f"reset:{i}"), ("🗑 Удалить", f"del:{i}")],
@@ -162,6 +201,14 @@ def setup(service: Service) -> Router:
         await state.clear()
         if u := await get_user(cb):
             await show(cb, *user_card(u))
+
+    @router.callback_query(F.data.startswith("proto:"))
+    async def user_proto(cb: CallbackQuery) -> None:
+        if u := await get_user(cb):
+            order = list(PROTOS)
+            db.update_user(u["id"], proto=order[(order.index(u["proto"]) + 1) % len(order)])
+            await apply(cb)
+            await show(cb, *user_card(db.user(u["id"])))
 
     @router.callback_query(F.data.startswith("links:"))
     async def user_links(cb: CallbackQuery) -> None:

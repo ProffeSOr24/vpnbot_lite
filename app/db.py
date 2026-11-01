@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS settings (
 """
 
 # columns added after the first release: (name, type)
-MIGRATIONS = [("awg_private", "TEXT"), ("awg_public", "TEXT"), ("awg_psk", "TEXT"), ("awg_ip", "TEXT")]
+MIGRATIONS = [("awg_private", "TEXT"), ("awg_public", "TEXT"), ("awg_psk", "TEXT"), ("awg_ip", "TEXT"),
+              ("proto", "TEXT NOT NULL DEFAULT 'both'")]  # both | vless | awg — what the user gets
 
 
 def wg_keypair() -> tuple[str, str]:

@@ -79,6 +79,15 @@ def fmt_bytes(n: int | None) -> str:
     return ""
 
 
+PROTOS = {"both": "🔗📡 VLESS + AmneziaWG", "vless": "🔗 только VLESS", "awg": "📡 только AmneziaWG"}
+
+
+def uses(user, proto: str) -> bool:
+    """Does the user get VLESS ("vless") or AmneziaWG ("awg")?"""
+    kind = user["proto"] if "proto" in user.keys() else "both"
+    return kind in ("both", proto)
+
+
 class Service:
     def __init__(self):
         self.db = DB(config.DATA_DIR / "vpnbot.db")
@@ -272,6 +281,8 @@ class Service:
                 f"{config.HY2_PORT}/?{urlencode(params)}#{quote(user['name'] + ' Hysteria2')}")
 
     def links(self, user, user_agent: str = "") -> list[str]:
+        if not uses(user, "vless"):
+            return []
         links = [self.vless_link(user)]
         if config.XHTTP_PORT and self.db.get("xhttp_enabled") == "1":
             links.append(self.xhttp_link(user))
@@ -317,7 +328,7 @@ class Service:
         """Regenerate configs and restart the cores. Returns an error text or None."""
         async with self._apply_lock:
             await self.collect_stats()
-            users = self.db.users(only_enabled=True)
+            users = [u for u in self.db.users(only_enabled=True) if uses(u, "vless")]
             s = self.settings()
             self.xray.write_config(users, s)
             error = await self.xray.check_config()
@@ -340,7 +351,7 @@ class Service:
                 await self.mtproto.stop()
             try:
                 self.db.ensure_awg(config.AWG_SUBNET)
-                users = self.db.users(only_enabled=True)
+                users = [u for u in self.db.users(only_enabled=True) if uses(u, "awg")]
                 if s.get("awg_enabled") == "1" and users:
                     self.awg.write_config(users, s)
                     await self.awg.sync()

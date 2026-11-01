@@ -140,7 +140,7 @@ def apply(data: dict, db: DB) -> int:
             name, n = f"{p['name'][:29]}-{n}", n + 1
         user_id = db.add_user(name)
         db.update_user(user_id, awg_public=p["public"], awg_private=p["private"], awg_psk=p["psk"],
-                       awg_ip=p["ip"], enabled=int(p["enabled"]))
+                       awg_ip=p["ip"], enabled=int(p["enabled"]), proto="awg")
         added += 1
     return added
 
