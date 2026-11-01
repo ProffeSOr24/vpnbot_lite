@@ -327,6 +327,12 @@ class Service:
                  "AllowedIPs = 0.0.0.0/0", "PersistentKeepalive = 25"]
         return "\n".join(lines) + "\n"
 
+    # --- disk ---
+    def request_cleanup(self) -> None:
+        """Ask the host to free disk space: the systemd unit that runs `vpn.sh update` sees "cleanup" and cleans."""
+        (config.DATA_DIR / "update.request").write_text("cleanup")
+        self.db.set("disk_clean_ts", int(time.time()))
+
     # --- applying ---
     async def apply(self) -> str | None:
         """Regenerate configs and restart the cores. Returns an error text or None."""

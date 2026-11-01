@@ -3,10 +3,11 @@
 #   ./vpn.sh install [BOT_TOKEN] [ADMIN_ID]   установка (Docker, настройки ядра, автообновление)
 #   ./vpn.sh update                           обновить бота из git и пересобрать
 #   ./vpn.sh https [ПОРТ]                     подписки по https (бесплатный адрес IP.nip.io + Let's Encrypt; ПОРТ — публичный, например текущий 2097)
-#   ./vpn.sh ddns ИМЯ ТОКЕН [IP]                              свой адрес ИМЯ.duckdns.org вместо IP — при смене IP устройства менять не нужно
-#   ./vpn.sh stealth [off]                   максимальная маскировка: VLESS на 443/8443, SNI = свой домен, сайт-приманка
+#   ./vpn.sh ddns ИМЯ ТОКЕН [IP]              свой адрес ИМЯ.duckdns.org вместо IP — при смене IP устройства менять не нужно
+#   ./vpn.sh stealth [off]                    максимальная маскировка: VLESS на 443/8443, SNI = свой домен, сайт-приманка
 #   ./vpn.sh https-cert CERT KEY              подписки по https с готовым сертификатом (например, от старого vpnbot)
 #   ./vpn.sh import-awg wg0|wg1 [--apply]     перенести AmneziaWG из старого vpnbot (без --apply — только проверка)
+#   ./vpn.sh cleanup                          освободить место: старые образы Docker, журнал, кэш apt, старые логи
 #   ./vpn.sh doctor                           вся диагностика одним выводом (без секретов) — пришлите его целиком
 #   ./vpn.sh restart | stop | status | logs
 set -euo pipefail
@@ -406,7 +407,28 @@ get_image() {
     docker compose build --pull
 }
 
+cmd_cleanup() {
+    need_root "$@"
+    local before after
+    before="$(df -B1 --output=used / | tail -1)"
+    docker image prune -a -f >/dev/null 2>&1 || true     # только образы, которые не использует ни один контейнер
+    docker builder prune -a -f >/dev/null 2>&1 || true
+    journalctl --vacuum-size=200M >/dev/null 2>&1 || true
+    apt-get clean >/dev/null 2>&1 || true
+    find /var/log -type f \( -name '*.gz' -o -name '*.[0-9]' -o -name '*.old' \) -delete 2>/dev/null || true
+    after="$(df -B1 --output=used / | tail -1)"
+    echo "freed=$(( before > after ? before - after : 0 )) used_pct=$(df --output=pcent / | tail -1 | tr -dc 0-9)" \
+        > data/cleanup.result
+    log "Освобождено: $(( (before > after ? before - after : 0) / 1048576 )) МБ, диск занят на $(df --output=pcent / | tail -1 | tr -d ' ')"
+}
+
 cmd_update() {
+    # the bot asks for a cleanup through the same systemd unit as for an update
+    if grep -q '^cleanup' data/update.request 2>/dev/null; then
+        rm -f data/update.request
+        cmd_cleanup
+        return
+    fi
     rm -f data/update.request
     if [ -d .git ] || git rev-parse --git-dir >/dev/null 2>&1; then
         log "Скачиваю новую версию"
@@ -432,10 +454,11 @@ case "${1:-}" in
     ddns) shift; cmd_ddns "$@" ;;
     stealth) shift; cmd_stealth "$@" ;;
     doctor) cmd_doctor ;;
+    cleanup) cmd_cleanup ;;
     import-awg) shift; cmd_import_awg "$@" ;;
     restart) docker compose up -d --force-recreate ;;  # пересоздать: подхватывает изменения .env
     stop) docker compose down ;;
     status) docker compose ps ;;
     logs) docker compose logs -f --tail=200 ;;
-    *) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+    *) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

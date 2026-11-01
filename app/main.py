@@ -70,12 +70,37 @@ async def keep_reachable(service: Service, bot: Bot) -> None:
             await asyncio.sleep(300)
 
 
+async def watch_disk(service: Service, bot: Bot) -> None:
+    """Disk at or above the threshold (80% by default): warn once a day, and clean up unless auto-cleanup is off.
+    The host reports what was freed in data/cleanup.result."""
+    db = service.db
+    result = config.DATA_DIR / "cleanup.result"
+    if result.exists():
+        info = dict(part.split("=", 1) for part in result.read_text().split() if "=" in part)
+        result.unlink()
+        await notify(bot, f"🧹 Очистка диска: освобождено {int(info.get('freed', 0)) / 2**20:.0f} МБ, "
+                          f"диск занят на {info.get('used_pct', '?')}%")
+    used = psutil.disk_usage(str(config.DATA_DIR)).percent
+    threshold = int(db.get("disk_threshold", "80") or 80)
+    if used < threshold:
+        return
+    now = time.time()
+    auto = db.get("disk_autoclean", "1") == "1"
+    if now - float(db.get("disk_alert_ts", "0") or 0) > 86400:
+        db.set("disk_alert_ts", int(now))
+        await notify(bot, f"⚠️ Диск занят на {used:.0f}% (порог {threshold}%)."
+                          + (" Запускаю автоочистку." if auto else " Очистить: 📊 Сервер → 🧹 Очистить диск."))
+    if auto and now - float(db.get("disk_clean_ts", "0") or 0) > 6 * 3600:
+        service.request_cleanup()
+
+
 async def background(service: Service, bot: Bot, ssl_ctx: ssl.SSLContext | None) -> None:
-    """Every minute: account traffic and disable expired users. Once a day: reload the subscription cert."""
+    """Every minute: account traffic and disable expired users, watch the disk. Once a day: reload the cert."""
     last_cert_reload = time.time()
     while True:
         await asyncio.sleep(60)
         try:
+            await watch_disk(service, bot)
             await service.collect_stats()
             disabled = await service.enforce_limits()
             if disabled:

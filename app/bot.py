@@ -464,7 +464,9 @@ def setup(service: Service) -> Router:
                      f" (проверено {time.strftime('%d.%m %H:%M', time.localtime(last.get('time', 0)))})")
         watch_on = db.get("watch_enabled", "1") == "1"
         await show(cb, text, kb([("🔄 Обновить", "server"), ("♻️ Перезапуск ядер", "restart")],
-                                [("📡 Доступность из РФ", "reach")],
+                                [("📡 Доступность из РФ", "reach"), ("🧹 Очистить диск", "cleanup")],
+                                [(f"🧹 Автоочистка при ≥{db.get('disk_threshold', '80')}%: "
+                                  f"{'вкл' if db.get('disk_autoclean', '1') == '1' else 'выкл'}", "cleanup_auto")],
                                 [(f"🔔 Сторож раз в час: {'вкл' if watch_on else 'выкл'}", "reach_toggle")], BACK))
 
     @router.callback_query(F.data == "reach")
@@ -477,6 +479,19 @@ def setup(service: Service) -> Router:
             db.set("watch_last", json.dumps(result))
             db.set("watch_state", result["state"])
         await cb.message.answer(watch.describe(result, service.host, port), reply_markup=kb([("📊 Сервер", "server")]))
+
+    @router.callback_query(F.data == "cleanup")
+    async def cleanup(cb: CallbackQuery) -> None:
+        service.request_cleanup()
+        await cb.answer()
+        await cb.message.answer("🧹 Чищу диск: старые образы Docker, системный журнал, кэш apt, старые логи. "
+                                "Через минуту-две придёт результат.\n\n"
+                                "Если ничего не придёт — на сервере: <code>./vpn.sh cleanup</code>")
+
+    @router.callback_query(F.data == "cleanup_auto")
+    async def cleanup_auto(cb: CallbackQuery) -> None:
+        db.set("disk_autoclean", "0" if db.get("disk_autoclean", "1") == "1" else "1")
+        await server(cb)
 
     @router.callback_query(F.data == "reach_toggle")
     async def reach_toggle(cb: CallbackQuery) -> None:
