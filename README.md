@@ -35,8 +35,8 @@
 ### 1. Установить бота
 ```bash
 apt-get update && apt-get install -y git
-git clone -b claude/vpnbot-lite https://github.com/ProffeSOr24/solution-template.git /opt/vpnbot
-cd /opt/vpnbot/vpnbot-lite
+git clone https://github.com/ProffeSOr24/vpnbot-lite.git /opt/vpnbot-lite
+cd /opt/vpnbot-lite
 ./vpn.sh install <ТОКЕН_БОТА> <ВАШ_TELEGRAM_ID>
 ```
 Скрипт поставит Docker, настроит ядро, скачает готовый образ и запустит бота. Через минуту бот пришлёт «запущен».
@@ -188,8 +188,12 @@ vpnbot-lite/
 │   ├── service.py   настройки, ссылки, применение конфигов, учёт трафика
 │   ├── cores.py     Xray, Hysteria2, AmneziaWG: конфиги, процессы, обновления
 │   ├── sub.py       HTTP-подписки
+│   ├── watch.py     DuckDNS и сторож доступности из России
+│   ├── import_awg.py перенос AmneziaWG со старого vpnbot
 │   ├── db.py        SQLite
 │   └── config.py    переменные окружения
+├── site/            сайт-приманка для режима stealth
+├── .github/workflows/image.yml   сборка готового образа в GHCR
 ├── Dockerfile
 ├── docker-compose.yml
 ├── vpn.sh           установка и обслуживание

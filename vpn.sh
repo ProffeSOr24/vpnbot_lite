@@ -115,14 +115,15 @@ cmd_install() {
     [ -n "${2:-}" ] && env_set ADMIN_IDS "$2"
     [ -n "$(env_get BOT_TOKEN)" ] || ask BOT_TOKEN "Токен бота от @BotFather"
     [ -n "$(env_get ADMIN_IDS)" ] || ask ADMIN_IDS "Ваш Telegram ID (узнать: @userinfobot)"
-    [ -n "$(env_get BOT_VERSION_URL)" ] || env_set BOT_VERSION_URL "$(version_url)"
+    # always from this checkout: a .env carried over from another repository or branch must follow it
+    [ -z "$(version_url)" ] || env_set BOT_VERSION_URL "$(version_url)"
     mkdir -p data
     install_docker
     tune_kernel
     open_firewall
     check_ports
     install_update_unit
-    [ -n "$(env_get VPNBOT_IMAGE)" ] || env_set VPNBOT_IMAGE "$(image_ref)"
+    [ -z "$(image_ref)" ] || env_set VPNBOT_IMAGE "$(image_ref)"
     get_image   # готовый образ с GitHub; если его нет — сборка на сервере
     docker compose up -d
     log "Готово! Откройте бота в Telegram и нажмите /start"
