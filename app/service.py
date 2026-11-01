@@ -23,7 +23,7 @@ from cryptography.x509.oid import NameOID
 
 from .watch import Reachability
 from . import config
-from .cores import AWG_PARAMS, XHTTP_CLIENT, AmneziaWG, Hysteria, MTProto, Xray, awg_client_lines
+from .cores import AWG_PARAMS, XHTTP_CLIENT, AmneziaWG, Hysteria, MTProto, Xray, awg_client_lines, awg_param_lines
 from .db import DB, wg_keypair
 
 log = logging.getLogger(__name__)
@@ -310,13 +310,16 @@ class Service:
         return (f"https://t.me/proxy?server={self.host}&port={config.MTPROTO_PORT}"
                 f"&secret={self.db.get('mtproto_secret')}")
 
-    def awg_conf(self, user) -> str | None:
-        """Client config; None for clients imported without their private key."""
+    def awg_conf(self, user, router: bool = False) -> str | None:
+        """Client config; None for clients imported without their private key.
+        Routers (Keenetic/Netcraze firmware) reject the QUIC-like I1 with several <b>/<r> tags: they get the
+        server's own parameters, which their firmware already accepts."""
         if not user["awg_private"]:
             return None
         s = self.settings()
+        params = awg_param_lines(s) if router else awg_client_lines(s)
         lines = ["[Interface]", f"PrivateKey = {user['awg_private']}", f"Address = {user['awg_ip']}/32",
-                 f"DNS = {config.AWG_DNS}", *awg_client_lines(s),
+                 f"DNS = {config.AWG_DNS}", *params,
                  "", "[Peer]", f"PublicKey = {s['awg_public']}",
                  *([f"PresharedKey = {user['awg_psk']}"] if user["awg_psk"] else []),
                  f"Endpoint = {self._host_for_url()}:{config.AWG_PORT}",

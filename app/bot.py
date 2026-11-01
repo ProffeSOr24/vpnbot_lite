@@ -181,7 +181,8 @@ def setup(service: Service) -> Router:
                 f"Доступ: {PROTOS[u['proto']]}")
         i = u["id"]
         get = [b for b in (("🔗 Ключи и QR", f"links:{i}") if uses(u, "vless") else None,
-                           ("📡 AmneziaWG", f"awg:{i}") if uses(u, "awg") else None) if b]
+                           ("📡 AWG приложение", f"awg:{i}") if uses(u, "awg") else None,
+                           ("📶 AWG роутер", f"awgr:{i}") if uses(u, "awg") else None) if b]
         markup = kb(get, [("🔁 Доступ: " + {"both": "оба", "vless": "VLESS", "awg": "AmneziaWG"}[u["proto"]],
                            f"proto:{i}")],
                     [("⏸ Отключить" if u["enabled"] else "▶️ Включить", f"toggle:{i}"),
@@ -227,24 +228,28 @@ def setup(service: Service) -> Router:
         await cb.message.answer(text, disable_web_page_preview=True)
         await cb.answer()
 
-    @router.callback_query(F.data.startswith("awg:"))
+    @router.callback_query(F.data.startswith(("awg:", "awgr:")))
     async def user_awg(cb: CallbackQuery) -> None:
+        for_router = cb.data.startswith("awgr:")
         u = await get_user(cb)
         if not u:
             return
         if db.get("awg_enabled") != "1":
             await cb.answer("AmneziaWG выключен в настройках", show_alert=True)
             return
-        conf = service.awg_conf(u)
+        conf = service.awg_conf(u, router=for_router)
         if conf is None:
             await cb.answer("Конфиг перенесён со старого сервера без приватного ключа — "
                             "файл у клиента уже есть, новый выдать нельзя", show_alert=True)
             return
         await cb.message.answer_document(
-            BufferedInputFile(conf.encode(), f"{u['name']}.conf"),
-            caption=f"📡 AmneziaWG для <b>{html.escape(u['name'])}</b>\n"
-                    "Роутер: Keenetic (4.2+), OpenWrt (amneziawg) — импорт этого .conf.\n"
-                    "Телефон/ПК: приложение AmneziaVPN или AmneziaWG — импорт файла или QR.")
+            BufferedInputFile(conf.encode(), f"{u['name']}{'-router' if for_router else ''}.conf"),
+            caption=(f"📶 AmneziaWG для роутера <b>{html.escape(u['name'])}</b>\n"
+                     "Keenetic/Netcraze (4.2+): Интернет → Другие подключения → WireGuard → Загрузить из файла. "
+                     "OpenWrt (amneziawg) — импорт этого .conf." if for_router else
+                     f"📡 AmneziaWG для <b>{html.escape(u['name'])}</b>\n"
+                     "Телефон/ПК: приложение AmneziaVPN или AmneziaWG — импорт файла или QR.\n"
+                     "Для роутера возьмите «📶 AWG роутер» — прошивки не принимают усиленную маскировку."))
         await cb.message.answer_photo(BufferedInputFile(qr_png(conf), "awg.png"), caption="QR для AmneziaWG")
         await cb.answer()
 
