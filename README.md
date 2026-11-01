@@ -35,7 +35,7 @@
 ### 1. Установить бота
 ```bash
 apt-get update && apt-get install -y git
-git clone https://github.com/ProffeSOr24/vpnbot-lite.git /opt/vpnbot-lite
+git clone https://github.com/ProffeSOr24/vpnbot_lite.git /opt/vpnbot-lite
 cd /opt/vpnbot-lite
 ./vpn.sh install <ТОКЕН_БОТА> <ВАШ_TELEGRAM_ID>
 ```
