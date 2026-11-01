@@ -17,6 +17,7 @@ import zipfile
 from pathlib import Path
 
 import aiohttp
+import socket
 
 from . import config
 
@@ -440,6 +441,16 @@ async def run(*cmd: str) -> tuple[int, str]:
     return proc.returncode, out.decode(errors="replace").strip()
 
 
+def outgoing_ip() -> str:
+    """The address the server sends from (routing decides; no packet is sent)."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("1.1.1.1", 53))
+            return sock.getsockname()[0]
+    except OSError:
+        return ""
+
+
 class AmneziaWG(Core):
     """Userspace AmneziaWG (amneziawg-go). Built from source with the image, updated together with the bot."""
     name = "amneziawg"
@@ -502,8 +513,15 @@ class AmneziaWG(Core):
         dns = [("nat", "PREROUTING", ["-i", i, "-d", ip, "-p", proto, "--dport", "53",
                                       "-j", "DNAT", "--to-destination", "1.1.1.1:53"])
                for ip in self.dns_redirect for proto in ("udp", "tcp")]
+        # extra IP (DDNS_IP): amneziawg answers from the main address, and the client drops the reply. DNAT the
+        # extra address onto the main one — conntrack then sends the replies back from the address the client used.
+        main_ip = outgoing_ip()
+        extra = [("nat", "PREROUTING", ["-d", config.DDNS_IP, "-p", "udp", "--dport", str(config.AWG_PORT),
+                                        "-j", "DNAT", "--to-destination", main_ip])] \
+            if config.DDNS_IP and main_ip and config.DDNS_IP != main_ip else []
         return [
             *dns,
+            *extra,
             ("nat", "POSTROUTING", ["-s", config.AWG_SUBNET, "!", "-o", i, "-j", "MASQUERADE"]),
             ("filter", "FORWARD", ["-i", i, "-j", "ACCEPT"]),
             ("filter", "FORWARD", ["-o", i, "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT"]),
