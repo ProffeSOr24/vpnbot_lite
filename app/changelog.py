@@ -36,7 +36,7 @@ def between(text: str, old: str | None, new: str, limit: int = 3500) -> str:
     chunks = []
     for version, body in sections(text):
         if _key(version) <= _key(new) and (old is None or _key(version) > _key(old)) and body:
-            chunks.append(f"<b>{version}</b>\n{to_telegram(body)}")
+            chunks.append(f"🆕 <b>Версия {version}</b>\n{to_telegram(body)}")
     out = "\n\n".join(chunks)
     if len(out) > limit:
         out = out[:limit].rsplit("\n", 1)[0] + "\n…полностью — в CHANGELOG.md на GitHub"
