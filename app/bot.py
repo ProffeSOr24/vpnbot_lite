@@ -20,7 +20,7 @@ from aiogram.types import (BufferedInputFile, CallbackQuery, FSInputFile, Inline
                            InlineKeyboardMarkup, Message)
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from . import config, watch
+from . import changelog, config, watch
 from .cores import latest_tag, plain_version
 from .service import PROTOS, Service, fmt_bytes, uses
 from .sub import qr_png
@@ -514,6 +514,18 @@ def setup(service: Service) -> Router:
         except (aiohttp.ClientError, asyncio.TimeoutError):
             return None
 
+    async def remote_changelog(current: str, remote: str) -> str:
+        """«Что нового» из CHANGELOG.md рядом с файлом VERSION в репозитории — видно до обновления."""
+        if not config.BOT_VERSION_URL.endswith("VERSION"):
+            return ""
+        url = config.BOT_VERSION_URL[:-len("VERSION")] + "CHANGELOG.md"
+        try:
+            async with aiohttp.ClientSession() as session, \
+                    session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as r:
+                return changelog.between(await r.text(), current, remote, limit=2500) if r.status == 200 else ""
+        except (aiohttp.ClientError, asyncio.TimeoutError):
+            return ""
+
     @router.callback_query(F.data == "updates")
     async def updates(cb: CallbackQuery) -> None:
         await cb.answer("Проверяю…")
@@ -538,6 +550,9 @@ def setup(service: Service) -> Router:
         lines.append(f"amneziawg: {await service.awg.version() or '?'} (обновляется вместе с ботом)")
         if remote and remote != config.VERSION:
             lines.append(f"бот: {config.VERSION} → доступна <b>{html.escape(remote)}</b>")
+            news = await remote_changelog(config.VERSION, remote)
+            if news:
+                lines.append(f"\n<b>Что будет в новой версии</b>\n\n{news}\n")
         else:
             lines.append(f"бот: {config.VERSION}" + (" ✅ актуальная" if remote else ""))
         rows.append([("⬆️ Обновить бота", "updbot")])

@@ -5,7 +5,8 @@ name: image
 on:
   push:
     paths-ignore:
-      - "**.md"
+      - "README.md"
+      - "ROADMAP.md"
   workflow_dispatch:
 
 permissions:

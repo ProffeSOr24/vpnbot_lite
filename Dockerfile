@@ -38,7 +38,7 @@ COPY --from=awg /out/ /opt/bin/
 WORKDIR /srv
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY VERSION .
+COPY VERSION CHANGELOG.md ./
 COPY app ./app
 
 ENV PYTHONUNBUFFERED=1 DATA_DIR=/data
