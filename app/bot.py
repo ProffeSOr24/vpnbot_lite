@@ -127,7 +127,9 @@ def setup(service: Service) -> Router:
         page = (last_page if only == last_only else 0) if page is None else page
         everyone = db.users()
         online = {u["id"] for u in everyone if service.presence(u)[0]}
-        shown = [u for u in everyone if not only or (u["id"] in online if only == "online" else uses(u, only))]
+        match = {"": lambda u: True, "online": lambda u: u["id"] in online,
+                 "offline": lambda u: u["id"] not in online}
+        shown = [u for u in everyone if match.get(only, lambda u: uses(u, only))(u)]
         shown.sort(key=lambda u: (list(ICON).index(u["proto"]), u["name"].lower()))
         pages = max(1, -(-len(shown) // PAGE))
         page = min(max(page, 0), pages - 1)
@@ -144,13 +146,15 @@ def setup(service: Service) -> Router:
                        ("▶️", f"up:{page + 1}" if page < pages - 1 else "noop")]).inline_keyboard[0])
         mark = lambda key: "• " if only == key else ""  # noqa: E731
         b.row(*kb([(f"{mark('')}Все", "uf:"), (f"{mark('online')}🟢 Онлайн", "uf:online"),
-                   (f"{mark('vless')}🔗 VLESS", "uf:vless"), (f"{mark('awg')}📡 AWG", "uf:awg")]).inline_keyboard[0])
+                   (f"{mark('offline')}🔴 Офлайн", "uf:offline")]).inline_keyboard[0])
+        b.row(*kb([(f"{mark('vless')}🔗 VLESS", "uf:vless"), (f"{mark('awg')}📡 AWG", "uf:awg")]).inline_keyboard[0])
         b.row(*kb([("➕ Добавить", "add"), *BACK]).inline_keyboard[0])
         if everyone:
             b.row(*kb([("🔁 Доступ для всех", "protoall"), ("🗑 Удалить всех", "delall")]).inline_keyboard[0])
         counts = {k: sum(1 for u in everyone if u["proto"] == k) for k in ICON}
         text = ("<b>Пользователи</b>\n"
-                f"🟢 Сейчас онлайн: <b>{len(online)}</b> из {len(everyone)}\n"
+                f"🟢 Сейчас онлайн: <b>{len(online)}</b>   🔴 не в сети: {len(everyone) - len(online)}"
+                f"   (всего {len(everyone)})\n"
                 f"🔗📡 VLESS + AmneziaWG: {counts['both']}   🔗 только VLESS: {counts['vless']}   "
                 f"📡 только AmneziaWG: {counts['awg']}\n"
                 + (f"Показано: {len(shown)} из {len(everyone)}\n" if only else "") +
