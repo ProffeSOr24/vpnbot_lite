@@ -1,6 +1,8 @@
 import asyncio
+import datetime
 import json
 import logging
+import re
 import ssl
 import time
 
@@ -14,16 +16,18 @@ from aiohttp import web
 
 from . import changelog, config, report, watch
 from .bot import setup
-from .service import Service
+from .service import MSK, Service
 from .sub import make_app
 
 log = logging.getLogger("vpnbot")
+AUTOUPDATE_HOUR = 3          # MSK: night auto-update window 03:00–04:00
+AUTOUPDATE_DELAY = 6 * 3600  # a new version must be on GitHub this long before servers take it
 
 
-async def notify(bot: Bot, text: str) -> None:
+async def notify(bot: Bot, text: str, silent: bool = False) -> None:
     for admin in config.ADMIN_IDS:
         try:
-            await bot.send_message(admin, text)
+            await bot.send_message(admin, text, disable_notification=silent)
         except TelegramAPIError as e:
             log.warning("cannot notify %s: %s", admin, e)
 
@@ -105,6 +109,47 @@ async def watch_disk(service: Service, bot: Bot) -> None:
         service.request_cleanup()
 
 
+async def auto_update(service: Service, now: float) -> None:
+    """Night auto-update (03:00–04:00 MSK, if enabled): ask the host to update the bot when GitHub has a newer
+    version. GitHub is checked hourly to learn when a version appeared; it is installed only after it has been
+    out for 6 hours — so a broken release fixed the same day never reaches the servers, and the image is surely
+    built. A version the admin rolled back from is skipped."""
+    db = service.db
+    if db.get("autoupdate", "0") != "1" or not config.BOT_VERSION_URL:
+        return
+    moment = datetime.datetime.fromtimestamp(now, MSK)
+    night = moment.hour == AUTOUPDATE_HOUR and db.get("autoupdate_day") != moment.strftime("%Y-%m-%d")
+    if not night and now - float(db.get("autoupdate_check", "0") or 0) < 3600:
+        return
+    try:
+        async with aiohttp.ClientSession() as session, \
+                session.get(config.BOT_VERSION_URL, timeout=aiohttp.ClientTimeout(total=15)) as r:
+            remote = (await r.text()).strip() if r.status == 200 else ""
+    except (aiohttp.ClientError, asyncio.TimeoutError):
+        return  # try again in a minute
+    db.set("autoupdate_check", int(now))
+    if night:
+        db.set("autoupdate_day", moment.strftime("%Y-%m-%d"))  # one decision per night
+    if not re.fullmatch(r"\d+(\.\d+)*", remote) or not changelog.newer(remote, config.VERSION):
+        return
+    seen_ver, _, seen_ts = (db.get("autoupdate_seen") or "").partition(" ")
+    if seen_ver != remote:
+        db.set("autoupdate_seen", f"{remote} {int(now)}")
+        seen_ts = str(int(now))
+    if not night:
+        return
+    skip = db.get("autoupdate_skip")
+    if skip and not changelog.newer(remote, skip):
+        log.info("auto-update: %s skipped, the admin rolled back from %s", remote, skip)
+        return
+    if now - int(seen_ts) < AUTOUPDATE_DELAY:
+        log.info("auto-update: %s is too fresh, next night", remote)
+        return
+    log.info("auto-update: %s -> %s", config.VERSION, remote)
+    db.set("autoupdate_pending", remote)
+    (config.DATA_DIR / "update.request").write_text("auto")
+
+
 async def background(service: Service, bot: Bot, ssl_ctx: ssl.SSLContext | None) -> None:
     """Every minute: account traffic and disable expired users, watch the disk. Once a day: reload the cert."""
     last_cert_reload = time.time()
@@ -114,6 +159,7 @@ async def background(service: Service, bot: Bot, ssl_ctx: ssl.SSLContext | None)
         try:
             now = time.time()
             sampler.tick(service, now)
+            await auto_update(service, now)
             if report.due(service, now):
                 text = report.build(service, now)
                 report.mark_sent(service, now)
@@ -161,13 +207,21 @@ async def main() -> None:
 
     previous = service.db.get("bot_version")
     service.db.set("bot_version", config.VERSION)
+    auto = service.db.get("autoupdate_pending") == config.VERSION  # this start is the night update we asked for
+    service.db.set("autoupdate_pending", "")
     if previous and changelog.newer(previous, config.VERSION):
+        service.db.set("autoupdate_skip", previous)  # night auto-update must not bring the bad version back
         await notify(bot, f"↩️ Бот возвращён на версию {config.VERSION} (была {previous}). "
-                          "Вернуться на новую — ⬆️ Обновления → ⬆️ Обновить бота.")
+                          "Вернуться на новую — ⬆️ Обновления → ⬆️ Обновить бота."
+                          + ("\nНочное автообновление эту версию пропустит и поставит только следующую."
+                             if service.db.get("autoupdate", "0") == "1" else ""))
     elif previous and previous != config.VERSION:
         news = changelog.local_between(previous, config.VERSION)
-        await notify(bot, f"✅ Бот обновлён: {previous} → {config.VERSION}"
-                          + (f"\n\n<b>Что нового</b>\n\n{news}" if news else ""))
+        head = "🌙 Ночное автообновление" if auto else "✅ Бот обновлён"
+        await notify(bot, f"{head}: {previous} → {config.VERSION}"
+                          + (f"\n\n<b>Что нового</b>\n\n{news}" if news else "")
+                          + ("\n\nЕсли что-то не так — ⬆️ Обновления → ↩️ Вернуть бота." if auto else ""),
+                     silent=auto)
     else:
         await notify(bot, f"🚀 VPN Bot Lite v{config.VERSION} запущен. /menu"
                           + (f"\n⚠️ {error}" if error else ""))

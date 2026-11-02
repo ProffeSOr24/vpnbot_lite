@@ -598,6 +598,10 @@ def setup(service: Service) -> Router:
         else:
             lines.append(f"бот: {config.VERSION}" + (" ✅ актуальная" if remote else ""))
         rows.append([("⬆️ Обновить бота", "updbot")])
+        auto = db.get("autoupdate", "0") == "1"
+        rows.append([(f"🌙 Автообновление ночью: {'вкл' if auto else 'выкл'}", "autoupd")])
+        lines.append("\n🌙 Автообновление: " + ("<b>вкл</b> — новая версия ставится сама в 3–4 ночи по Москве, "
+                                                "если вышла не меньше 6 часов назад" if auto else "выкл"))
         previous = rollback_target()
         if previous:
             rows.append([(f"↩️ Вернуть бота на {previous}", "rollbot")])
@@ -661,6 +665,14 @@ def setup(service: Service) -> Router:
             await cb.message.answer(f"↩️ {core.name} откатан до {version}")
         except Exception as e:  # noqa: BLE001
             await cb.message.answer(f"❌ {html.escape(str(e))}")
+
+    @router.callback_query(F.data == "autoupd")
+    async def autoupdate_toggle(cb: CallbackQuery) -> None:
+        on = db.get("autoupdate", "0") != "1"
+        db.set("autoupdate", "1" if on else "0")
+        await cb.answer("🌙 Автообновление включено: в 3–4 ночи по Москве" if on else "Автообновление выключено",
+                        show_alert=on)
+        await updates(cb)
 
     @router.callback_query(F.data == "updbot")
     async def update_bot(cb: CallbackQuery) -> None:
