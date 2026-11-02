@@ -27,6 +27,27 @@ CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+-- for the weekly report: traffic and minutes online per user per day (Moscow date)
+CREATE TABLE IF NOT EXISTS usage (
+    day     TEXT NOT NULL,
+    name    TEXT NOT NULL,
+    bytes   INTEGER NOT NULL DEFAULT 0,
+    minutes INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (day, name)
+);
+-- server load every 10 minutes; a gap between samples means the bot or the server was down
+CREATE TABLE IF NOT EXISTS metrics (
+    ts        INTEGER PRIMARY KEY,
+    cpu       REAL NOT NULL,
+    ram       REAL NOT NULL,
+    disk      REAL NOT NULL,
+    disk_used INTEGER NOT NULL
+);
+-- result of every hourly reachability check
+CREATE TABLE IF NOT EXISTS reach_log (
+    ts    INTEGER PRIMARY KEY,
+    state TEXT NOT NULL
+);
 """
 
 # columns added after the first release: (name, type)
@@ -140,6 +161,26 @@ class DB:
 
     def add_traffic(self, name: str, up: int, down: int) -> None:
         self.conn.execute("UPDATE users SET up=up+?, down=down+? WHERE name=?", (up, down, name))
+
+    # --- history for the weekly report ---
+    def add_usage(self, day: str, name: str, nbytes: int, minutes: int) -> None:
+        self.conn.execute(
+            "INSERT INTO usage(day, name, bytes, minutes) VALUES(?, ?, ?, ?) "
+            "ON CONFLICT(day, name) DO UPDATE SET bytes=bytes+excluded.bytes, minutes=minutes+excluded.minutes",
+            (day, name, nbytes, minutes))
+
+    def add_metric(self, ts: int, cpu: float, ram: float, disk: float, disk_used: int) -> None:
+        self.conn.execute("INSERT OR REPLACE INTO metrics VALUES(?, ?, ?, ?, ?)", (ts, cpu, ram, disk, disk_used))
+
+    def add_reach(self, ts: int, state: str) -> None:
+        self.conn.execute("INSERT OR REPLACE INTO reach_log VALUES(?, ?)", (ts, state))
+
+    def prune_history(self, now: int) -> None:
+        """Keep two months of usage and a month of metrics and checks."""
+        day = time.strftime("%Y-%m-%d", time.gmtime(now - 62 * 86400))
+        self.conn.execute("DELETE FROM usage WHERE day < ?", (day,))
+        self.conn.execute("DELETE FROM metrics WHERE ts < ?", (now - 31 * 86400,))
+        self.conn.execute("DELETE FROM reach_log WHERE ts < ?", (now - 31 * 86400,))
 
     def backup_to(self, dest: Path) -> None:
         target = sqlite3.connect(dest)

@@ -20,7 +20,7 @@ from aiogram.types import (BufferedInputFile, CallbackQuery, FSInputFile, Inline
                            InlineKeyboardMarkup, Message)
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from . import changelog, config, watch
+from . import changelog, config, report, watch
 from .cores import latest_tag, plain_version
 from .service import PROTOS, Service, fmt_bytes, uses
 from .sub import qr_png
@@ -487,6 +487,7 @@ def setup(service: Service) -> Router:
         watch_on = db.get("watch_enabled", "1") == "1"
         await show(cb, text, kb([("🔄 Обновить", "server"), ("♻️ Перезапуск ядер", "restart")],
                                 [("📡 Доступность из РФ", "reach"), ("🧹 Очистить диск", "cleanup")],
+                                [("📋 Сводка за неделю", "report")],
                                 [(f"🧹 Автоочистка при ≥{db.get('disk_threshold', '80')}%: "
                                   f"{'вкл' if db.get('disk_autoclean', '1') == '1' else 'выкл'}", "cleanup_auto")],
                                 [(f"🔔 Сторож раз в час: {'вкл' if watch_on else 'выкл'}", "reach_toggle")], BACK))
@@ -501,6 +502,25 @@ def setup(service: Service) -> Router:
             db.set("watch_last", json.dumps(result))
             db.set("watch_state", result["state"])
         await cb.message.answer(watch.describe(result, service.host, port), reply_markup=kb([("📊 Сервер", "server")]))
+
+    def report_kb() -> InlineKeyboardMarkup:
+        on = db.get("report_enabled", "1") == "1"
+        return kb([("🔕 Не присылать по понедельникам" if on else "🔔 Присылать по понедельникам в 10:00",
+                    "report_toggle")], [("📊 Сервер", "server")])
+
+    @router.callback_query(F.data == "report")
+    async def weekly_report(cb: CallbackQuery) -> None:
+        await cb.answer()
+        await cb.message.answer(report.build(service), reply_markup=report_kb())
+
+    @router.callback_query(F.data == "report_toggle")
+    async def report_toggle(cb: CallbackQuery) -> None:
+        on = db.get("report_enabled", "1") == "1"
+        db.set("report_enabled", "0" if on else "1")
+        if not on:
+            db.set("report_week", report.week_key(time.time()))  # next one on Monday, not right now
+        await cb.answer("Сводка по понедельникам выключена" if on else "Сводка будет приходить по понедельникам в 10:00")
+        await cb.message.edit_reply_markup(reply_markup=report_kb())
 
     @router.callback_query(F.data == "cleanup")
     async def cleanup(cb: CallbackQuery) -> None:

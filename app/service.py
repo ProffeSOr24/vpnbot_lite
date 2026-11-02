@@ -112,6 +112,13 @@ def fmt_ago(ts: int) -> str:
     return f"{day} в {hm}"
 
 
+MSK = datetime.timezone(datetime.timedelta(hours=3))  # schedule and day boundaries of the weekly report
+
+
+def msk_day(ts: float) -> str:
+    return datetime.datetime.fromtimestamp(ts, MSK).strftime("%Y-%m-%d")
+
+
 PROTOS = {"both": "🔗📡 VLESS + AmneziaWG", "vless": "🔗 только VLESS", "awg": "📡 только AmneziaWG"}
 
 
@@ -393,9 +400,13 @@ class Service:
         for public, (handshake, endpoint) in (await self.awg.handshakes()).items():
             if public in awg_names and now - handshake < ONLINE_WINDOW:
                 active[awg_names[public]] = ("AmneziaWG", endpoint.rsplit(":", 1)[0])
+        day = msk_day(now)
         for name, (up, down) in stats.items():
             if up or down:
                 self.db.add_traffic(name, up, down)
+                self.db.add_usage(day, name, up + down, 0)
+        for name in active:
+            self.db.add_usage(day, name, 0, 1)  # called once a minute: one minute online
         self.update_presence(active, now)
 
     def update_presence(self, active: dict[str, tuple[str, str]], now: int) -> None:

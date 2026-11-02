@@ -12,7 +12,7 @@ from aiogram.exceptions import TelegramAPIError
 from aiogram.types import BotCommand
 from aiohttp import web
 
-from . import changelog, config, watch
+from . import changelog, config, report, watch
 from .bot import setup
 from .service import Service
 from .sub import make_app
@@ -62,6 +62,8 @@ async def keep_reachable(service: Service, bot: Bot) -> None:
                     port = config.XHTTP_PORT or config.XRAY_PORT
                     result = await service.reach.check(session, service.host, port)
                     service.db.set("watch_last", json.dumps(result))
+                    if result["state"] != "error":
+                        service.db.add_reach(int(time.time()), result["state"])
                     previous = service.db.get("watch_state", "ok")
                     state = result["state"]
                     if state == "error" or state == previous:
@@ -106,9 +108,16 @@ async def watch_disk(service: Service, bot: Bot) -> None:
 async def background(service: Service, bot: Bot, ssl_ctx: ssl.SSLContext | None) -> None:
     """Every minute: account traffic and disable expired users, watch the disk. Once a day: reload the cert."""
     last_cert_reload = time.time()
+    sampler = report.Sampler()
     while True:
         await asyncio.sleep(60)
         try:
+            now = time.time()
+            sampler.tick(service, now)
+            if report.due(service, now):
+                text = report.build(service, now)
+                report.mark_sent(service, now)
+                await notify(bot, text)
             await watch_disk(service, bot)
             await service.collect_stats()
             disabled = await service.enforce_limits()
