@@ -38,7 +38,8 @@ def sub_ssl_context() -> ssl.SSLContext | None:
 
 async def keep_reachable(service: Service, bot: Bot) -> None:
     """Every 5 minutes: point DuckDNS at the current IP. Every hour: check reachability from Russia, alert on change."""
-    last_check = 0.0
+    last_check = time.time() - 3600 + 600  # first check 10 minutes after start: not while the server is restarting
+    pending = None  # a bad state seen once; reported only if the re-check confirms it
     async with aiohttp.ClientSession() as session:
         while True:
             try:
@@ -62,8 +63,16 @@ async def keep_reachable(service: Service, bot: Bot) -> None:
                     result = await service.reach.check(session, service.host, port)
                     service.db.set("watch_last", json.dumps(result))
                     previous = service.db.get("watch_state", "ok")
-                    if result["state"] != "error" and result["state"] != previous:
-                        service.db.set("watch_state", result["state"])
+                    state = result["state"]
+                    if state == "error" or state == previous:
+                        pending = None
+                    elif state != "ok" and pending != state:
+                        # one bad result can be check-host's own hiccup: re-check in 5 minutes before alarming
+                        pending = state
+                        last_check = time.time() - 3600 + 300
+                    else:
+                        pending = None
+                        service.db.set("watch_state", state)
                         await notify(bot, watch.describe(result, service.host, port))
             except Exception:  # noqa: BLE001 - the loop must survive
                 log.exception("reachability job failed")

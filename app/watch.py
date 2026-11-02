@@ -76,8 +76,11 @@ class Reachability:
         except (aiohttp.ClientError, asyncio.TimeoutError, KeyError, ValueError) as e:
             return {"state": "error", "error": f"check-host.net недоступен: {e}"}
 
-        def ok(kind: str, node: str) -> bool:
+        def ok(kind: str, node: str) -> bool | None:
+            """True/False, or None when the node has not answered (check-host is slow or the node is busy)."""
             res = results.get(kind, {}).get(node)
+            if res is None:
+                return None
             if not res or not res[0]:
                 return False
             if kind == "ping":
@@ -86,17 +89,25 @@ class Reachability:
 
         ru_rows = [(nodes[n].get("asn", "?"), nodes[n].get("location", ["", "", "?"])[2], ok("ping", n), ok("tcp", n))
                    for n in ru]
-        abroad_ok = sum(ok("tcp", n) for n in abroad)
-        ru_ok = sum(1 for _, _, p, t in ru_rows if t)
-        if abroad and not abroad_ok:
+        abroad_res = [r for r in (ok("tcp", n) for n in abroad) if r is not None]
+        abroad_ok = sum(abroad_res)
+        ru_known = [t for _, _, _, t in ru_rows if t is not None]
+        ru_ok = sum(ru_known)
+        if not ru_known:
+            return {"state": "error", "error": "узлы check-host.net не ответили вовремя", "ru": ru_rows,
+                    "time": int(time.time())}
+        if abroad_res and not abroad_ok and not ru_ok:
             state = "down"
-        elif ru_ok == len(ru_rows):
+        elif ru_ok == len(ru_known):
             state = "ok"
         elif ru_ok:
             state = "partial"
-        else:
+        elif abroad_ok:
             state = "blocked"
-        return {"state": state, "ru": ru_rows, "abroad": f"{abroad_ok}/{len(abroad)}", "time": int(time.time())}
+        else:  # no control result from abroad — can't tell a block from an outage
+            return {"state": "error", "error": "узлы за рубежом не ответили — нечем сравнить", "ru": ru_rows,
+                    "time": int(time.time())}
+        return {"state": state, "ru": ru_rows, "abroad": f"{abroad_ok}/{len(abroad_res)}" if abroad_res else "", "time": int(time.time())}
 
 
 STATE_TEXT = {
@@ -108,12 +119,16 @@ STATE_TEXT = {
 }
 
 
+def _mark(value: bool | None) -> str:
+    return "❔" if value is None else "✅" if value else "❌"
+
+
 def describe(result: dict, host: str, port: int) -> str:
     lines = [f"<b>Доступность {host}</b>: {STATE_TEXT.get(result['state'], result['state'])}"]
     if result.get("error"):
         lines.append(result["error"])
     for asn, city, ping_ok, tcp_ok in result.get("ru", []):
-        lines.append(f"{city} {asn}: ping {'✅' if ping_ok else '❌'}, порт {port} {'✅' if tcp_ok else '❌'}")
+        lines.append(f"{city} {asn}: ping {_mark(ping_ok)}, порт {port} {_mark(tcp_ok)}")
     if result.get("abroad"):
         lines.append(f"Из-за рубежа (контроль): {result['abroad']} узлов отвечают")
     return "\n".join(lines)
