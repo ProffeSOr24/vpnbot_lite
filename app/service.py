@@ -448,7 +448,7 @@ class Service:
             since = fmt_duration(now - (user["online_since"] or seen))
             ip = f", {user['last_ip']}" if user["last_ip"] else ""
             return True, f"🟢 онлайн {since} — {user['last_via']}{ip}"
-        return False, f"⚪️ не в сети, был {fmt_ago(seen)} ({user['last_via']})"
+        return False, f"🔴 не в сети, был {fmt_ago(seen)} ({user['last_via']})"
 
     async def enforce_limits(self) -> list[str]:
         """Disable users that are expired or out of traffic. Returns the reasons for notifications."""

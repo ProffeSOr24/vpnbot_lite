@@ -138,7 +138,7 @@ def setup(service: Service) -> Router:
         b = InlineKeyboardBuilder()
         for u in shown[page * PAGE:(page + 1) * PAGE]:
             used = fmt_bytes(u["up"] + u["down"])
-            dot = "🟢" if u["id"] in online else "⚪️"
+            dot = "🟢" if u["id"] in online else "🔴"
             b.button(text=f"{dot}{service.user_status(u)} {ICON[u['proto']]} {u['name']} · {used}",
                      callback_data=f"u:{u['id']}")
         b.adjust(1)
@@ -157,7 +157,7 @@ def setup(service: Service) -> Router:
                 f"🔗📡 VLESS + AmneziaWG: {counts['both']}   🔗 только VLESS: {counts['vless']}   "
                 f"📡 только AmneziaWG: {counts['awg']}\n"
                 + (f"Показано: {len(shown)} из {len(everyone)}\n" if only else "") +
-                "🟢 в сети  ⚪️ не в сети · ✅ активен  ⏳ скоро истекает  ⏸ отключён")
+                "🟢 в сети  🔴 не в сети · ✅ активен  ⏳ скоро истекает  ⏸ отключён")
         await show(target, text, b.as_markup())
 
     @router.callback_query(F.data == "users")
