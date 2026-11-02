@@ -128,7 +128,7 @@ def build(service: Service, now: float | None = None) -> str:
     elif disk.percent >= 80:
         warn.append(f"диск занят на {disk.percent:.0f}%")
     cores = []
-    for core in (service.xray, service.awg, service.hysteria):
+    for core in (service.xray, service.awg):
         if core.wanted:
             cores.append(f"{core.name} {'🟢' if core.running else '🔴'}")
             if not core.running:

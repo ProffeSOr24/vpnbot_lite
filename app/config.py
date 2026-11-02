@@ -16,7 +16,6 @@ BUILTIN_BIN_DIR = Path(os.environ.get("BUILTIN_BIN_DIR", "/opt/bin"))  # baked i
 
 SERVER_HOST = os.environ.get("SERVER_HOST", "").strip()
 XRAY_PORT = _int("XRAY_PORT", 443)
-HY2_PORT = _int("HY2_PORT", 443)
 XHTTP_PORT = _int("XHTTP_PORT", 8443)  # VLESS XHTTP + Reality; 0 disables
 SUB_PORT = _int("SUB_PORT", 2096)
 SUB_LISTEN = os.environ.get("SUB_LISTEN", "0.0.0.0").strip()  # 127.0.0.1 when Caddy serves HTTPS in front
@@ -43,7 +42,6 @@ DDNS_TOKEN = os.environ.get("DDNS_TOKEN", "").strip()
 DDNS_IP = os.environ.get("DDNS_IP", "").strip()
 
 XRAY_API = "127.0.0.1:10085"
-HY2_STATS = "127.0.0.1:10086"
 
 # URL of the VERSION file of the bot in the git repository, used to check for bot updates
 BOT_VERSION_URL = os.environ.get("BOT_VERSION_URL", "").strip()

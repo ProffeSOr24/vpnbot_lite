@@ -2,12 +2,10 @@
 import asyncio
 import base64
 import datetime
-import hashlib
 import ipaddress
 import json
 import logging
 import random
-import re
 import secrets
 import socket
 import ssl
@@ -15,24 +13,17 @@ import time
 from urllib.parse import quote, urlencode
 
 import aiohttp
-from cryptography import x509
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
-from cryptography.x509.oid import NameOID
 
 from .watch import Reachability
 from . import config
-from .cores import AWG_PARAMS, XHTTP_CLIENT, AmneziaWG, Hysteria, Xray, awg_client_lines, awg_param_lines
+from .cores import AWG_PARAMS, XHTTP_CLIENT, AmneziaWG, Xray, awg_client_lines, awg_param_lines
 from .db import DB, wg_keypair
 
 log = logging.getLogger(__name__)
 
 DEFAULT_REALITY_SNI = "www.microsoft.com"
-# Hysteria2 uses a self-signed certificate. Most clients (hysteria, sing-box, Hiddify, Streisand...) need
-# insecure=1 to accept it, but Xray 26+ refuses `insecure` and accepts only a pinned certificate.
-XRAY_CLIENTS = re.compile(r"happ|v2raytun|v2rayn|xray", re.IGNORECASE)
-DEFAULT_HY_SNI = "www.bing.com"
 
 
 def b64url(data: bytes) -> str:
@@ -45,29 +36,6 @@ def reality_keys() -> tuple[str, str]:
                                 serialization.NoEncryption())
     public = key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
     return b64url(private), b64url(public)
-
-
-def self_signed_cert(cn: str) -> tuple[str, str]:
-    key = ec.generate_private_key(ec.SECP256R1())
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
-    now = datetime.datetime.now(datetime.timezone.utc)
-    cert = (x509.CertificateBuilder()
-            .subject_name(name).issuer_name(name)
-            .public_key(key.public_key())
-            .serial_number(x509.random_serial_number())
-            .not_valid_before(now - datetime.timedelta(days=1))
-            .not_valid_after(now + datetime.timedelta(days=3650))
-            .add_extension(x509.SubjectAlternativeName([x509.DNSName(cn)]), critical=False)
-            .sign(key, hashes.SHA256()))
-    cert_pem = cert.public_bytes(serialization.Encoding.PEM).decode()
-    key_pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
-                                serialization.NoEncryption()).decode()
-    return cert_pem, key_pem
-
-
-def cert_pin(cert_pem: str) -> str:
-    cert = x509.load_pem_x509_certificate(cert_pem.encode())
-    return hashlib.sha256(cert.public_bytes(serialization.Encoding.DER)).hexdigest()
 
 
 def fmt_bytes(n: int | None) -> str:
@@ -132,7 +100,6 @@ class Service:
     def __init__(self):
         self.db = DB(config.DATA_DIR / "vpnbot.db")
         self.xray = Xray()
-        self.hysteria = Hysteria()
         self.awg = AmneziaWG()
         self.reach = Reachability()
         self._apply_lock = asyncio.Lock()
@@ -144,14 +111,9 @@ class Service:
             self.regenerate_reality()
         if not db.get("reality_sni"):
             db.set("reality_sni", DEFAULT_REALITY_SNI)
-        if not db.get("hy_sni"):
-            db.set("hy_sni", DEFAULT_HY_SNI)
-        if not db.get("hy_cert"):
-            cert, key = self_signed_cert(db.get("hy_sni"))
-            db.set("hy_cert", cert)
-            db.set("hy_key", key)
-        for k, v in (("hy_stats_secret", secrets.token_hex(16)), ("hy_obfs_password", secrets.token_urlsafe(16)),
-                     ("hy_obfs", "0"), ("block_ads", "0"), ("hy_enabled", "0"), ("awg_enabled", "1"),
+        db.conn.execute("DELETE FROM settings WHERE key LIKE 'hy\\_%' ESCAPE '\\'")  # Hysteria2 was removed in 1.25
+        (config.BIN_DIR / "hysteria").unlink(missing_ok=True)
+        for k, v in (("block_ads", "0"), ("awg_enabled", "1"),
                      ("reality_nosni", "1"), ("xhttp_enabled", "1"), ("xhttp_path", "/" + secrets.token_hex(6)),
                      ("watch_enabled", "1")):
             if db.get(k) is None:
@@ -183,11 +145,6 @@ class Service:
         self.db.set("reality_private", private)
         self.db.set("reality_public", public)
         self.db.set("reality_sid", secrets.token_hex(8))
-
-    def regenerate_hy_cert(self) -> None:
-        cert, key = self_signed_cert(self.db.get("hy_sni"))
-        self.db.set("hy_cert", cert)
-        self.db.set("hy_key", key)
 
     def settings(self) -> dict:
         s = {r["key"]: r["value"] for r in self.db.conn.execute("SELECT key, value FROM settings")}
@@ -307,26 +264,12 @@ class Service:
         return (f"vless://{user['uuid']}@{self._reality_host()}:{config.XHTTP_PORT}"
                 f"?{urlencode(params)}#{quote(user['name'] + ' XHTTP')}")
 
-    def hy2_link(self, user, insecure: bool = True) -> str:
-        """`pinSHA256`/`pcs` pin the self-signed certificate; `insecure=1` must be left out for Xray clients."""
-        s = self.settings()
-        pin = cert_pin(s["hy_cert"])
-        params = {"sni": s["hy_sni"], "pinSHA256": pin, "pcs": pin}
-        if insecure:
-            params["insecure"] = "1"
-        if s.get("hy_obfs") == "1":
-            params.update({"obfs": "salamander", "obfs-password": s["hy_obfs_password"]})
-        return (f"hysteria2://{quote(user['name'])}:{quote(user['hy_pass'])}@{self._host_for_url()}:"
-                f"{config.HY2_PORT}/?{urlencode(params)}#{quote(user['name'] + ' Hysteria2')}")
-
-    def links(self, user, user_agent: str = "") -> list[str]:
+    def links(self, user) -> list[str]:
         if not uses(user, "vless"):
             return []
         links = [self.vless_link(user)]
         if config.XHTTP_PORT and self.db.get("xhttp_enabled") == "1":
             links.append(self.xhttp_link(user))
-        if self.db.get("hy_enabled") == "1":
-            links.append(self.hy2_link(user, insecure=not XRAY_CLIENTS.search(user_agent)))
         return links
 
     def awg_conf(self, user, router: bool = False) -> str | None:
@@ -365,11 +308,6 @@ class Service:
                 log.error("xray config error: %s", error)
                 return f"Xray: {error}"
             await self.xray.restart()
-            if s.get("hy_enabled") == "1" and users:
-                self.hysteria.write_config(users, s)
-                await self.hysteria.restart()
-            else:
-                await self.hysteria.stop()
             try:
                 self.db.ensure_awg(config.AWG_SUBNET)
                 users = [u for u in self.db.users(only_enabled=True) if uses(u, "awg")]
@@ -378,7 +316,7 @@ class Service:
                     await self.awg.sync()
                 else:
                     await self.awg.stop()
-            except Exception as e:  # noqa: BLE001 - Xray/Hysteria keep working even if AWG can't start
+            except Exception as e:  # noqa: BLE001 - Xray keeps working even if AWG can't start
                 log.exception("amneziawg apply failed")
                 return f"AmneziaWG: {e}"
             return None
@@ -388,7 +326,6 @@ class Service:
         active: dict[str, tuple[str, str]] = {}  # name -> (via, ip): who did something since the last call
         awg_names = {u["awg_public"]: u["name"] for u in self.db.users() if u["awg_public"]}
         for via, part in (("VLESS", await self.xray.pop_stats()),
-                          ("Hysteria2", await self.hysteria.pop_stats(self.db.get("hy_stats_secret", ""))),
                           ("AmneziaWG", await self.awg.pop_stats(awg_names))):
             for name, (up, down) in part.items():
                 acc = stats.setdefault(name, [0, 0])

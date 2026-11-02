@@ -11,20 +11,19 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl unzip tzdata iproute2 iptables \
     && rm -rf /var/lib/apt/lists/*
 
-# Latest Xray and Hysteria2 at build time. Later updates are installed from the bot into /data/bin.
+# Latest Xray at build time. Later updates are installed from the bot into /data/bin.
 RUN set -eux; \
     case "$(uname -m)" in \
-        x86_64) XARCH=64; HARCH=amd64 ;; \
-        aarch64) XARCH=arm64-v8a; HARCH=arm64 ;; \
+        x86_64) XARCH=64 ;; \
+        aarch64) XARCH=arm64-v8a ;; \
         *) echo "unsupported arch $(uname -m)"; exit 1 ;; \
     esac; \
     mkdir -p /opt/bin; \
     curl -fsSL -o /tmp/xray.zip "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-${XARCH}.zip"; \
     unzip -q /tmp/xray.zip xray geoip.dat geosite.dat -d /opt/bin; \
     rm /tmp/xray.zip; \
-    curl -fsSL -o /opt/bin/hysteria "https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-${HARCH}"; \
-    chmod +x /opt/bin/xray /opt/bin/hysteria; \
-    /opt/bin/xray version; /opt/bin/hysteria version
+    chmod +x /opt/bin/xray; \
+    /opt/bin/xray version
 
 COPY --from=awg /out/ /opt/bin/
 

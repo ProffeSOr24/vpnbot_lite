@@ -95,8 +95,7 @@ def setup(service: Service) -> Router:
         return (f"<b>VPN Bot Lite</b> v{config.VERSION}\n"
                 f"Сервер: <code>{html.escape(service.host)}</code>\n"
                 f"Пользователи: {active} активных из {len(users)}\n"
-                f"Xray: {dot(service.xray)}   "
-                f"Hysteria2: {dot(service.hysteria)}   AmneziaWG: {dot(service.awg)}")
+                f"Xray: {dot(service.xray)}   AmneziaWG: {dot(service.awg)}")
 
     @router.message(CommandStart())
     @router.message(Command("menu"))
@@ -247,9 +246,6 @@ def setup(service: Service) -> Router:
         text = (f"<b>{html.escape(u['name'])}</b>\n\n"
                 f"📲 <b>Подписка</b> (рекомендуется — ключи обновляются сами):\n<code>{html.escape(sub)}</code>\n\n"
                 + "\n\n".join(f"<code>{html.escape(link)}</code>" for link in service.links(u))
-                + (f"\n\nHysteria2 для Happ / v2RayTun / v2rayN (без insecure):\n"
-                   f"<code>{html.escape(service.hy2_link(u, insecure=False))}</code>"
-                   if db.get("hy_enabled") == "1" else "")
                 + "\n\nПриложения: Hiddify, v2RayTun, Happ (iOS/Android), v2rayN (Windows), Streisand (iOS).")
         await cb.message.answer_photo(BufferedInputFile(qr_png(sub), "qr.png"), caption="QR-код подписки")
         await cb.message.answer(text, disable_web_page_preview=True)
@@ -465,7 +461,7 @@ def setup(service: Service) -> Router:
         load = ", ".join(f"{x:.2f}" for x in os.getloadavg())
         users = db.users()
         total = sum(u["up"] + u["down"] for u in users)
-        xv, hv = await service.xray.version(), await service.hysteria.version()
+        xv = await service.xray.version()
 
         def core_line(core, ver):
             state = "🟢 работает" if core.running else ("⚪️ выключен" if not core.wanted else "🔴 упал")
@@ -479,7 +475,7 @@ def setup(service: Service) -> Router:
                 f"RAM: {fmt_bytes(mem.used)} / {fmt_bytes(mem.total)} ({mem.percent:.0f}%)\n"
                 f"Диск: {fmt_bytes(disk.used)} / {fmt_bytes(disk.total)} ({disk.percent:.0f}%)\n"
                 f"Сеть с загрузки ОС: ↑{fmt_bytes(net.bytes_sent)} ↓{fmt_bytes(net.bytes_recv)}\n\n"
-                f"{core_line(service.xray, xv)}\n{core_line(service.hysteria, hv)}\n"
+                f"{core_line(service.xray, xv)}\n"
                 f"{core_line(service.awg, await service.awg.version())}\n\n"
                 f"Трафик пользователей (всего): {fmt_bytes(total)}")
         if config.DDNS_DOMAIN:
@@ -577,7 +573,7 @@ def setup(service: Service) -> Router:
         await cb.answer("Проверяю…")
         rows, lines = [], ["<b>Обновления</b>\n"]
         async with aiohttp.ClientSession() as session:
-            for core in (service.xray, service.hysteria):
+            for core in (service.xray,):
                 current = await core.version()
                 try:
                     tag = await latest_tag(session, core.repo)
@@ -638,7 +634,7 @@ def setup(service: Service) -> Router:
                                 "Если ничего не произошло — на сервере: <code>./vpn.sh rollback</code>")
 
     def core_by_name(name: str):
-        return {"xray": service.xray, "hysteria": service.hysteria, "amneziawg": service.awg}[name]
+        return {"xray": service.xray, "amneziawg": service.awg}[name]
 
     @router.callback_query(F.data.startswith("upd:"))
     async def update_core(cb: CallbackQuery) -> None:
@@ -694,7 +690,6 @@ def setup(service: Service) -> Router:
         text = (f"<b>Настройки</b>\n\n"
                 f"Адрес сервера: <code>{html.escape(service.host)}</code>\n"
                 f"Порты: Reality {config.XRAY_PORT}/tcp, XHTTP {config.XHTTP_PORT or '—'}/tcp, "
-                f"Hysteria2 {config.HY2_PORT}/udp, "
                 f"AmneziaWG {config.AWG_PORT}/udp, подписка {config.SUB_PORT}/tcp\n\n"
                 + (f"<b>VLESS Reality</b>\nМаскировка: свой сайт <code>{html.escape(s['self_sni'])}</code> "
                    f"(SNI = свой домен, настоящий сертификат; отключить: <code>./vpn.sh stealth off</code>)\n"
@@ -703,7 +698,6 @@ def setup(service: Service) -> Router:
                    f"передавать SNI в ссылках: {'нет' if s.get('reality_nosni') == '1' else 'да'}\n") +
                 f"XHTTP: {on('xhttp_enabled') if config.XHTTP_PORT else 'выкл (XHTTP_PORT=0)'}\n"
                 f"Public key: <code>{s['reality_public']}</code>\nShort ID: <code>{s['reality_sid']}</code>\n\n"
-                f"<b>Hysteria2</b>: {on('hy_enabled')}, обфускация Salamander: {on('hy_obfs')}\n"
                 f"<b>AmneziaWG</b>: {on('awg_enabled')}, подсеть {config.AWG_SUBNET}, порт {config.AWG_PORT}\n"
                 f"Маскировка новых конфигов: "
                 f"{'QUIC Initial 1200 байт' if s.get('awg_client_profile', 'quic') == 'quic' else 'как у сервера'}\n"
@@ -712,7 +706,6 @@ def setup(service: Service) -> Router:
                     [(f"SNI в ссылках: {'нет' if s.get('reality_nosni') == '1' else 'да'}", "set:nosni"),
                      (f"XHTTP: {on('xhttp_enabled')}", "set:xhttp")],
                     [("🔑 Новые ключи Reality", "set:rekey")],
-                    [(f"Hysteria2: {on('hy_enabled')}", "set:hy"), (f"Обфускация: {on('hy_obfs')}", "set:obfs")],
                     [(f"AmneziaWG: {on('awg_enabled')}", "set:awg"), ("🔑 Новые ключи AWG", "set:awgkey")],
                     [("Маскировка новых AWG-конфигов: "
                       + ("QUIC" if s.get("awg_client_profile", "quic") == "quic" else "как у сервера"), "set:awgprof")],
@@ -725,14 +718,14 @@ def setup(service: Service) -> Router:
         await state.clear()
         await show(cb, *settings_view())
 
-    @router.callback_query(F.data.in_({"set:hy", "set:obfs", "set:ads", "set:awg", "set:nosni", "set:xhttp"}))
+    @router.callback_query(F.data.in_({"set:ads", "set:awg", "set:nosni", "set:xhttp"}))
     async def toggle_setting(cb: CallbackQuery) -> None:
-        key = {"set:hy": "hy_enabled", "set:obfs": "hy_obfs", "set:ads": "block_ads",
+        key = {"set:ads": "block_ads",
                "set:awg": "awg_enabled", "set:nosni": "reality_nosni", "set:xhttp": "xhttp_enabled"}[cb.data]
         db.set(key, "0" if db.get(key) == "1" else "1")
         await apply(cb)
         await show(cb, *settings_view())
-        if key in ("hy_enabled", "hy_obfs", "reality_nosni", "xhttp_enabled"):
+        if key in ("reality_nosni", "xhttp_enabled"):
             await cb.message.answer("ℹ️ Ссылки изменились — клиентам с подпиской достаточно обновить её.")
 
     @router.callback_query(F.data == "set:rekey")
@@ -908,7 +901,7 @@ def setup(service: Service) -> Router:
         debug = db.get("debug_logs") == "1"
         await show(cb, "Какие логи показать?\n\nПодробные логи Xray показывают каждое подключение — "
                        "включите, попробуйте подключиться и откройте нужные логи.",
-                   kb([("Xray", "log:xray"), ("Hysteria2", "log:hysteria"), ("AmneziaWG", "log:amneziawg")],
+                   kb([("Xray", "log:xray"), ("AmneziaWG", "log:amneziawg")],
                       [(f"🔍 Подробные логи: {'вкл' if debug else 'выкл'}", "debuglogs")], BACK))
 
     @router.callback_query(F.data == "debuglogs")

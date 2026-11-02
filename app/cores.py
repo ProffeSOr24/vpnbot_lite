@@ -1,4 +1,4 @@
-"""Xray and Hysteria2 cores: config generation, process supervision and updates."""
+"""Xray and AmneziaWG cores: config generation, process supervision and updates."""
 import asyncio
 import collections
 import io
@@ -379,58 +379,6 @@ class Xray(Core):
             pair = result.setdefault(parts[1], [0, 0])
             pair[0 if parts[3] == "uplink" else 1] += value
         return result
-
-
-PRIVATE_NETS = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "169.254.0.0/16",
-                "100.64.0.0/10", "fc00::/7", "fe80::/10", "::1/128"]
-
-
-class Hysteria(Core):
-    name = "hysteria"
-    repo = "apernet/hysteria"
-    version_re = r"Version:\s*v?(\d+\.\d+\.\d+)"
-
-    def args(self) -> list[str]:
-        return [str(self.binary), "server", "-c", str(self.config_path), "--disable-update-check"]
-
-    def asset_url(self, tag: str) -> str:
-        return f"https://github.com/{self.repo}/releases/download/{tag}/hysteria-linux-{_arch()[1]}"
-
-    def unpack(self, payload: bytes, dest: Path) -> None:
-        (dest / self.name).write_bytes(payload)
-
-    def write_config(self, users, s: dict) -> None:
-        tls_dir = config.DATA_DIR / "hysteria-tls"
-        tls_dir.mkdir(parents=True, exist_ok=True)
-        (tls_dir / "cert.pem").write_text(s["hy_cert"])
-        key = tls_dir / "key.pem"
-        key.write_text(s["hy_key"])
-        key.chmod(0o600)
-        cfg = {
-            "listen": f":{config.HY2_PORT}",
-            "tls": {"cert": str(tls_dir / "cert.pem"), "key": str(key)},
-            "auth": {"type": "userpass", "userpass": {u["name"]: u["hy_pass"] for u in users}},
-            "masquerade": {"type": "proxy", "proxy": {"url": f"https://{s['hy_sni']}/", "rewriteHost": True}},
-            "trafficStats": {"listen": config.HY2_STATS, "secret": s["hy_stats_secret"]},
-            "acl": {"inline": [*(f"reject({net})" for net in PRIVATE_NETS), "direct(all)"]},
-        }
-        if s.get("hy_obfs") == "1":
-            cfg["obfs"] = {"type": "salamander", "salamander": {"password": s["hy_obfs_password"]}}
-        self.config_path.write_text(json.dumps(cfg, indent=2))
-
-    async def pop_stats(self, secret: str) -> dict[str, list[int]]:
-        if not self.running:
-            return {}
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f"http://{config.HY2_STATS}/traffic?clear=1",
-                                       headers={"Authorization": secret},
-                                       timeout=aiohttp.ClientTimeout(total=5)) as r:
-                    data = await r.json(content_type=None)
-        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
-            return {}
-        # hysteria: tx = sent to client (download), rx = received from client (upload)
-        return {name: [int(v.get("rx", 0)), int(v.get("tx", 0))] for name, v in (data or {}).items()}
 
 
 async def run(*cmd: str) -> tuple[int, str]:

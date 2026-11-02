@@ -40,7 +40,7 @@ install_docker() {
 }
 
 tune_kernel() {
-    log "Включаю BBR, форвардинг (AmneziaWG) и увеличиваю UDP-буферы (Hysteria2)"
+    log "Включаю BBR, форвардинг (AmneziaWG) и увеличиваю UDP-буферы (AmneziaWG)"
     cat > /etc/sysctl.d/99-vpnbot-lite.conf <<'EOF'
 net.ipv4.ip_forward=1
 net.core.default_qdisc=fq
@@ -57,7 +57,6 @@ open_firewall() {
     log "Открываю порты в ufw"
     ufw allow "$(env_port XRAY_PORT 443)/tcp"
     [ "$(env_port XHTTP_PORT 8443)" = 0 ] || ufw allow "$(env_port XHTTP_PORT 8443)/tcp"
-    ufw allow "$(env_port HY2_PORT 443)/udp"
     ufw allow "$(env_port AWG_PORT 51820)/udp"
     ufw allow "$(env_port SUB_PORT 2096)/tcp"
 }
@@ -349,11 +348,11 @@ cmd_doctor() {
         section "Настройки (.env без токена и ID)"
         grep -vE '^(BOT_TOKEN|ADMIN_IDS)=' .env
         section "Порты"
-        ss -ltnupH 2>/dev/null | grep -E "xray|hysteria|amneziawg|caddy|python" | awk '{print $1, $5, $7}'
+        ss -ltnupH 2>/dev/null | grep -E "xray|amneziawg|caddy|python" | awk '{print $1, $5, $7}'
         section "Ядра"
-        docker exec vpnbot-lite sh -c 'for b in xray hysteria amneziawg-go; do
+        docker exec vpnbot-lite sh -c 'for b in xray amneziawg-go; do
             p=/data/bin/$b; [ -x "$p" ] || p=/opt/bin/$b
-            printf "%s: " "$b"; case $b in xray) $p version | head -1;; hysteria) $p version | grep -i "^version";;
+            printf "%s: " "$b"; case $b in xray) $p version | head -1;;
             *) $p --version 2>&1 | head -1;; esac; done' 2>&1
         section "AmneziaWG"
         docker exec vpnbot-lite sh -c 'now=$(date +%s); /opt/bin/awg show awg0 latest-handshakes 2>&1 |

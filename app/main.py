@@ -166,7 +166,7 @@ async def auto_update(service: Service, now: float) -> None:
 
 async def health_problems(service: Service, session: aiohttp.ClientSession, baseline: str) -> list[str] | None:
     """What is broken right now; None when it cannot be told (check-host did not answer)."""
-    problems = [f"{core.name} не работает" for core in (service.xray, service.awg, service.hysteria)
+    problems = [f"{core.name} не работает" for core in (service.xray, service.awg)
                 if core.wanted and not core.running]
     if service.xray.wanted:
         try:
@@ -352,7 +352,6 @@ async def main() -> None:
         reach_task.cancel()
         await service.collect_stats()
         await service.xray.stop()
-        await service.hysteria.stop()
         await service.awg.stop()
         await runner.cleanup()
 
