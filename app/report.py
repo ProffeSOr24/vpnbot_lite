@@ -100,7 +100,7 @@ def build(service: Service, now: float | None = None) -> str:
     if rows and now - rows[-1]["ts"] > GAP:
         gaps.append(int(now - rows[-1]["ts"]))
     down_min = sum(gaps) // 60
-    uptime = f"аптайм {(now - boot) / 86400:.0f} дн" if now - boot >= 86400 else "перезагружался сегодня"
+    uptime = f"uptime {(now - boot) / 86400:.0f} дн" if now - boot >= 86400 else "перезагружался сегодня"
     if not rows:
         server.append("Данные о нагрузке ещё собираются — полная картина будет в следующей сводке.")
     elif gaps:

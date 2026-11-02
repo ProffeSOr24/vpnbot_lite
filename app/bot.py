@@ -465,12 +465,12 @@ def setup(service: Service) -> Router:
 
         def core_line(core, ver):
             state = "🟢 работает" if core.running else ("⚪️ выключен" if not core.wanted else "🔴 упал")
-            up = f", аптайм {fmt_uptime(time.time() - core.started_at)}" if core.running else ""
+            up = f", uptime {fmt_uptime(time.time() - core.started_at)}" if core.running else ""
             return f"{core.name} {ver or '?'}: {state}{up}"
 
         text = (f"<b>Сервер</b> {html.escape(service.host)}\n"
                 f"ОС: {html.escape(platform.platform(terse=True))}\n"
-                f"Аптайм: {fmt_uptime(time.time() - psutil.boot_time())}\n"
+                f"Uptime: {fmt_uptime(time.time() - psutil.boot_time())}\n"
                 f"CPU: {psutil.cpu_percent(interval=0.5):.0f}% ({psutil.cpu_count()} ядер), load {load}\n"
                 f"RAM: {fmt_bytes(mem.used)} / {fmt_bytes(mem.total)} ({mem.percent:.0f}%)\n"
                 f"Диск: {fmt_bytes(disk.used)} / {fmt_bytes(disk.total)} ({disk.percent:.0f}%)\n"
