@@ -23,7 +23,7 @@ from cryptography.x509.oid import NameOID
 
 from .watch import Reachability
 from . import config
-from .cores import AWG_PARAMS, XHTTP_CLIENT, AmneziaWG, Hysteria, MTProto, Xray, awg_client_lines, awg_param_lines
+from .cores import AWG_PARAMS, XHTTP_CLIENT, AmneziaWG, Hysteria, Xray, awg_client_lines, awg_param_lines
 from .db import DB, wg_keypair
 
 log = logging.getLogger(__name__)
@@ -127,7 +127,6 @@ class Service:
         self.xray = Xray()
         self.hysteria = Hysteria()
         self.awg = AmneziaWG()
-        self.mtproto = MTProto()
         self.reach = Reachability()
         self._apply_lock = asyncio.Lock()
 
@@ -147,7 +146,7 @@ class Service:
         for k, v in (("hy_stats_secret", secrets.token_hex(16)), ("hy_obfs_password", secrets.token_urlsafe(16)),
                      ("hy_obfs", "0"), ("block_ads", "0"), ("hy_enabled", "0"), ("awg_enabled", "1"),
                      ("reality_nosni", "1"), ("xhttp_enabled", "1"), ("xhttp_path", "/" + secrets.token_hex(6)),
-                     ("mtproto_enabled", "0"), ("watch_enabled", "1")):
+                     ("watch_enabled", "1")):
             if db.get(k) is None:
                 db.set(k, v)
         if not db.get("awg_private"):
@@ -323,26 +322,6 @@ class Service:
             links.append(self.hy2_link(user, insecure=not XRAY_CLIENTS.search(user_agent)))
         return links
 
-    def mtproto_domain(self) -> str:
-        """The fake-TLS name: chosen in the bot, else the server's own <ip>.nip.io (the name matches the IP)."""
-        if self.db.get("mtproto_domain"):
-            return self.db.get("mtproto_domain")
-        try:
-            ip = ipaddress.ip_address(self.host)
-            if ip.version == 4:
-                return f"{str(ip).replace('.', '-')}.nip.io"
-        except ValueError:
-            return self.host  # SERVER_HOST is a domain
-        return "www.google.com"
-
-    def regenerate_mtproto(self) -> None:
-        domain = self.mtproto_domain()
-        self.db.set("mtproto_secret", "ee" + secrets.token_hex(16) + domain.encode().hex())
-
-    def mtproto_link(self) -> str:
-        return (f"https://t.me/proxy?server={self.host}&port={config.MTPROTO_PORT}"
-                f"&secret={self.db.get('mtproto_secret')}")
-
     def awg_conf(self, user, router: bool = False) -> str | None:
         """Client config; None for clients imported without their private key.
         Routers: Keenetic/Netcraze firmware answers «invalid I1 value» to signature packets, so their config has
@@ -384,14 +363,6 @@ class Service:
                 await self.hysteria.restart()
             else:
                 await self.hysteria.stop()
-            if config.MTPROTO_PORT and s.get("mtproto_enabled") == "1":
-                if not s.get("mtproto_secret"):
-                    self.regenerate_mtproto()
-                    s = self.settings()
-                if self.mtproto.write_config(s, self.host) or not self.mtproto.running:
-                    await self.mtproto.restart()
-            else:
-                await self.mtproto.stop()
             try:
                 self.db.ensure_awg(config.AWG_SUBNET)
                 users = [u for u in self.db.users(only_enabled=True) if uses(u, "awg")]

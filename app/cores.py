@@ -11,7 +11,6 @@ import re
 import shutil
 import socket
 import stat
-import tarfile
 import tempfile
 import time
 import zipfile
@@ -629,86 +628,3 @@ def awg_client_lines(s: dict) -> list[str]:
         return awg_param_lines(s)
     shared = [line for line in awg_param_lines(s) if not line.startswith(("I1 ", "I2 ", "I3 ", "I4 ", "I5 "))]
     return [*shared, f"I1 = {AWG_QUIC_I1}"]
-
-
-class MTProto(Core):
-    """MTProto proxy for Telegram: telemt. Its fake-TLS replays the real certificate and TLS record sizes of
-    the masking site, so the server's answer looks like that site's own (synthetic answers get detected)."""
-    name = "telemt"
-    repo = "telemt/telemt"
-    version_re = r"telemt (\d+\.\d+\.\d+)"
-    # keep client connections and problems; drop the chatter about telemt's own links to Telegram
-    noise = re.compile(r" TRACE |ME RTT sample|mio::poll|STUN |(DEBUG|INFO) telemt::(transport::middle_proxy|network)")
-
-    @property
-    def workdir(self) -> Path:
-        path = config.DATA_DIR / "telemt"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
-
-    @property
-    def config_path(self) -> Path:
-        return self.workdir / "telemt.toml"
-
-    def args(self) -> list[str]:
-        return [str(self.binary), str(self.config_path)]
-
-    async def version(self, binary: Path | None = None) -> str | None:
-        binary = binary or self.binary
-        if not binary.exists():
-            return None
-        code, out = await run(str(binary), "--version")
-        m = re.search(self.version_re, out)
-        return m.group(1) if m else None
-
-    def asset_url(self, tag: str) -> str:
-        arch = {"64": "x86_64", "arm64-v8a": "aarch64"}[_arch()[0]]
-        return f"https://github.com/{self.repo}/releases/download/{tag}/telemt-{arch}-linux-musl.tar.gz"
-
-    def unpack(self, payload: bytes, dest: Path) -> None:
-        with tarfile.open(fileobj=io.BytesIO(payload)) as tar:
-            member = next(m for m in tar.getmembers() if m.isfile() and Path(m.name).name == "telemt")
-            (dest / self.name).write_bytes(tar.extractfile(member).read())
-
-    def write_config(self, s: dict, host: str) -> bool:
-        """Returns True when the config changed (telemt has to be restarted to pick it up)."""
-        secret = s["mtproto_secret"]  # ee + 16 bytes key + hex(domain), the same string as in the link
-        domain = bytes.fromhex(secret[34:]).decode()
-        text = "\n".join([
-            "[general]",
-            f'log_level = "{"verbose" if s.get("debug_logs") == "1" else "normal"}"',
-            "disable_colors = true",
-            "[general.modes]",
-            "classic = false",
-            "secure = false",
-            "tls = true",
-            "[general.links]",
-            f'public_host = "{host}"',
-            f"public_port = {config.MTPROTO_PORT}",
-            "[server]",
-            f"port = {config.MTPROTO_PORT}",
-            "[server.api]",
-            "enabled = false",
-            "[[server.listeners]]",
-            'ip = "0.0.0.0"',
-            "[censorship]",
-            f'tls_domain = "{domain}"',
-            "mask = true",  # probes get the real site
-            "tls_emulation = true",
-            f'tls_front_dir = "{self.workdir / "tlsfront"}"',
-            "[access.users]",
-            f'proxy = "{secret[2:34]}"',
-            "",
-        ])
-        old = self.config_path.read_text() if self.config_path.exists() else ""
-        self.config_path.write_text(text)
-        return text != old
-
-    async def _spawn(self) -> None:
-        # telemt keeps its caches (Telegram proxy config, TLS fronting data) relative to the working dir
-        self.logs.append(f"--- start {time.strftime('%Y-%m-%d %H:%M:%S')} ---")
-        self.proc = await asyncio.create_subprocess_exec(
-            *self.args(), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, env=self.env(),
-            cwd=self.workdir)
-        self.started_at = time.time()
-        asyncio.create_task(self._read_output(self.proc))

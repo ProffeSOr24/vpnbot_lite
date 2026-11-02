@@ -26,13 +26,6 @@ RUN set -eux; \
     chmod +x /opt/bin/xray /opt/bin/hysteria; \
     /opt/bin/xray version; /opt/bin/hysteria version
 
-# telemt (MTProto proxy for Telegram): static release build; later updates are installed from the bot.
-RUN set -eux; \
-    case "$(uname -m)" in x86_64) TARCH=x86_64 ;; aarch64) TARCH=aarch64 ;; esac; \
-    curl -fsSL "https://github.com/telemt/telemt/releases/latest/download/telemt-${TARCH}-linux-musl.tar.gz" \
-        | tar xz -C /opt/bin telemt; \
-    /opt/bin/telemt --version
-
 COPY --from=awg /out/ /opt/bin/
 
 WORKDIR /srv

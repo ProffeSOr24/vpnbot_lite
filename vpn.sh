@@ -60,7 +60,6 @@ open_firewall() {
     ufw allow "$(env_port HY2_PORT 443)/udp"
     ufw allow "$(env_port AWG_PORT 51820)/udp"
     ufw allow "$(env_port SUB_PORT 2096)/tcp"
-    [ "$(env_port MTPROTO_PORT 8444)" = 0 ] || ufw allow "$(env_port MTPROTO_PORT 8444)/tcp"
 }
 
 version_url() {  # raw-ссылка на VERSION в GitHub, чтобы бот видел новые версии
@@ -99,8 +98,7 @@ EOF
 
 check_ports() {
     local port
-    for port in "$(env_port XRAY_PORT 443)" "$(env_port XHTTP_PORT 8443)" "$(env_port SUB_PORT 2096)" \
-                "$(env_port MTPROTO_PORT 8444)"; do
+    for port in "$(env_port XRAY_PORT 443)" "$(env_port XHTTP_PORT 8443)" "$(env_port SUB_PORT 2096)"; do
         [ "$port" = 0 ] && continue
         if ss -ltnH "sport = :$port" 2>/dev/null | grep -q . && ! docker ps --format '{{.Names}}' | grep -q '^vpnbot-lite$'; then
             echo "⚠️  Порт $port/tcp уже занят другим процессом:"; ss -ltnpH "sport = :$port" || true
@@ -351,9 +349,9 @@ cmd_doctor() {
         section "Настройки (.env без токена и ID)"
         grep -vE '^(BOT_TOKEN|ADMIN_IDS)=' .env
         section "Порты"
-        ss -ltnupH 2>/dev/null | grep -E "xray|hysteria|amneziawg|telemt|caddy|python" | awk '{print $1, $5, $7}'
+        ss -ltnupH 2>/dev/null | grep -E "xray|hysteria|amneziawg|caddy|python" | awk '{print $1, $5, $7}'
         section "Ядра"
-        docker exec vpnbot-lite sh -c 'for b in xray hysteria telemt amneziawg-go; do
+        docker exec vpnbot-lite sh -c 'for b in xray hysteria amneziawg-go; do
             p=/data/bin/$b; [ -x "$p" ] || p=/opt/bin/$b
             printf "%s: " "$b"; case $b in xray) $p version | head -1;; hysteria) $p version | grep -i "^version";;
             *) $p --version 2>&1 | head -1;; esac; done' 2>&1
