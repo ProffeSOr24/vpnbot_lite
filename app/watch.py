@@ -68,7 +68,7 @@ class Reachability:
                                        headers=HEADERS, timeout=aiohttp.ClientTimeout(total=20)) as r:
                     ids[kind] = (await r.json(content_type=None))["request_id"]
             results = {}
-            for _ in range(10):  # nodes report within ~5–20 s
+            for _ in range(30):  # nodes usually report within 5–20 s, but check-host can take over a minute
                 await asyncio.sleep(3)
                 results = {k: await self._get(session, f"/check-result/{rid}") for k, rid in ids.items()}
                 if all(v is not None for res in results.values() for v in res.values()):
