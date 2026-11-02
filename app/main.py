@@ -29,7 +29,16 @@ GUARD_BAD = 4                # … 4 failures in a row (~40 minutes) roll the bo
 GUARD_WINDOW = 90 * 60       # … watched for an hour and a half
 
 
+QUIET_HOURS = (23, 8)  # MSK: messages at night come without sound
+
+
+def quiet_now() -> bool:
+    hour = datetime.datetime.now(MSK).hour
+    return hour >= QUIET_HOURS[0] or hour < QUIET_HOURS[1]
+
+
 async def notify(bot: Bot, text: str, silent: bool = False) -> None:
+    silent = silent or quiet_now()
     for admin in config.ADMIN_IDS:
         try:
             await bot.send_message(admin, text, disable_notification=silent)
