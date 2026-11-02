@@ -33,6 +33,7 @@ def to_telegram(markdown: str) -> str:
     text = html.escape(markdown, quote=False)
     text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
     text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
+    text = re.sub(r"^ {2,}- ", "    ◦ ", text, flags=re.M)  # nested items
     return re.sub(r"^- ", "• ", text, flags=re.M)
 
 

@@ -433,6 +433,8 @@ cmd_update() {
         cmd_rollback
         return
     fi
+    local auto=""   # a night auto-update from the bot: roll back by itself if the new bot does not start
+    grep -q '^auto' data/update.request 2>/dev/null && auto=1
     rm -f data/update.request
     local old_head old_ver image
     old_head="$(git rev-parse HEAD 2>/dev/null || true)"
@@ -459,6 +461,26 @@ cmd_update() {
         echo "$old_head $old_ver" > data/rollback.info   # what ./vpn.sh rollback returns to
     fi
     log "Обновлено до $(cat VERSION)"
+    if [ -n "$auto" ] && [ "$(cat VERSION)" != "$old_ver" ] && ! wait_healthy "$(cat VERSION)"; then
+        echo "новая версия $(cat VERSION) не запустилась за 10 минут" > data/autorollback.reason
+        log "Бот $(cat VERSION) не запустился — возвращаю $old_ver"
+        cmd_rollback
+    fi
+}
+wait_healthy() {
+    # the bot writes data/heartbeat "<version> <unix time>" every minute; wait up to 10 minutes for the new one
+    local want="$1" v t i
+    for i in $(seq 60); do
+        sleep 10
+        [ -s data/heartbeat ] || continue
+        v="" t=""
+        read -r v t < data/heartbeat || true
+        case "$t" in ''|*[!0-9]*) continue ;; esac
+        if [ "$v" = "$want" ] && [ $(( $(date +%s) - t )) -lt 180 ]; then
+            return 0
+        fi
+    done
+    return 1
 }
 
 cmd_rollback() {

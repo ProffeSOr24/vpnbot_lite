@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+import html
 import json
 import logging
 import re
@@ -22,6 +23,9 @@ from .sub import make_app
 log = logging.getLogger("vpnbot")
 AUTOUPDATE_HOUR = 3          # MSK: night auto-update window 03:00–04:00
 AUTOUPDATE_DELAY = 6 * 3600  # a new version must be on GitHub this long before servers take it
+GUARD_EVERY = 600            # after a night update: health check every 10 minutes …
+GUARD_BAD = 4                # … 4 failures in a row (~40 minutes) roll the bot back
+GUARD_WINDOW = 90 * 60       # … watched for an hour and a half
 
 
 async def notify(bot: Bot, text: str, silent: bool = False) -> None:
@@ -150,6 +154,63 @@ async def auto_update(service: Service, now: float) -> None:
     (config.DATA_DIR / "update.request").write_text("auto")
 
 
+async def health_problems(service: Service, session: aiohttp.ClientSession, baseline: str) -> list[str] | None:
+    """What is broken right now; None when it cannot be told (check-host did not answer)."""
+    problems = [f"{core.name} не работает" for core in (service.xray, service.awg, service.hysteria)
+                if core.wanted and not core.running]
+    if service.xray.wanted:
+        try:
+            _, writer = await asyncio.wait_for(asyncio.open_connection("127.0.0.1", config.XRAY_PORT), 5)
+            writer.close()
+        except (OSError, asyncio.TimeoutError):
+            problems.append(f"Xray не принимает подключения на порту {config.XRAY_PORT}")
+    port = config.XHTTP_PORT or config.XRAY_PORT
+    result = await service.reach.check(session, service.host, port)
+    if result["state"] == "down" and baseline != "down":
+        problems.append("сервер не отвечает ни из России, ни из-за рубежа")
+    elif result["state"] == "error" and not problems:
+        return None
+    return problems
+
+
+async def night_guard(service: Service, bot: Bot, now: float) -> None:
+    """After a night auto-update: if the VPN is broken for ~40 minutes, go back to the previous version."""
+    db = service.db
+    guard = json.loads(db.get("night_guard") or "{}")
+    if not guard or now < guard["next"]:
+        return
+    if now > guard["until"]:
+        db.set("night_guard", "")
+        return
+    guard["next"] = now + GUARD_EVERY
+    db.set("night_guard", json.dumps(guard))
+    async with aiohttp.ClientSession() as session:
+        problems = await health_problems(service, session, guard["baseline"])
+    if problems is None:
+        return
+    guard["bad"] = guard["bad"] + 1 if problems else 0
+    db.set("night_guard", json.dumps(guard))
+    log.info("night guard: %s", problems or "ok")
+    if guard["bad"] < GUARD_BAD:
+        return
+    db.set("night_guard", "")
+    reason = "; ".join(problems)
+    (config.DATA_DIR / "autorollback.reason").write_text(reason)
+    (config.DATA_DIR / "update.request").write_text("rollback")
+    await notify(bot, f"⚠️ После ночного обновления до {config.VERSION} VPN не работает ~40 минут: "
+                      f"{html.escape(reason)}.\nВозвращаю версию {html.escape(guard['from'])}…", silent=True)
+
+
+JOBS: set[asyncio.Task] = set()  # keep references so running jobs are not garbage-collected
+
+
+async def safe(job) -> None:
+    try:
+        await job
+    except Exception:  # noqa: BLE001 - a background job must not die silently
+        log.exception("background job failed")
+
+
 async def background(service: Service, bot: Bot, ssl_ctx: ssl.SSLContext | None) -> None:
     """Every minute: account traffic and disable expired users, watch the disk. Once a day: reload the cert."""
     last_cert_reload = time.time()
@@ -158,6 +219,10 @@ async def background(service: Service, bot: Bot, ssl_ctx: ssl.SSLContext | None)
         await asyncio.sleep(60)
         try:
             now = time.time()
+            (config.DATA_DIR / "heartbeat").write_text(f"{config.VERSION} {int(now)}")  # vpn.sh waits for it
+            task = asyncio.create_task(safe(night_guard(service, bot, now)))  # check-host takes ~1–2 min
+            JOBS.add(task)
+            task.add_done_callback(JOBS.discard)
             sampler.tick(service, now)
             await auto_update(service, now)
             if report.due(service, now):
@@ -209,12 +274,27 @@ async def main() -> None:
     service.db.set("bot_version", config.VERSION)
     auto = service.db.get("autoupdate_pending") == config.VERSION  # this start is the night update we asked for
     service.db.set("autoupdate_pending", "")
+    reason_file = config.DATA_DIR / "autorollback.reason"
+    reason = reason_file.read_text().strip() if reason_file.exists() else ""
+    reason_file.unlink(missing_ok=True)
+    if previous != config.VERSION and not auto:
+        service.db.set("night_guard", "")  # updated or rolled back by hand: nothing to watch
+    if auto:
+        service.db.set("night_guard", json.dumps({
+            "from": previous or "", "baseline": service.db.get("watch_state", "ok"), "bad": 0,
+            "next": time.time() + GUARD_EVERY, "until": time.time() + GUARD_WINDOW}))
     if previous and changelog.newer(previous, config.VERSION):
         service.db.set("autoupdate_skip", previous)  # night auto-update must not bring the bad version back
-        await notify(bot, f"↩️ Бот возвращён на версию {config.VERSION} (была {previous}). "
-                          "Вернуться на новую — ⬆️ Обновления → ⬆️ Обновить бота."
-                          + ("\nНочное автообновление эту версию пропустит и поставит только следующую."
-                             if service.db.get("autoupdate", "0") == "1" else ""))
+        service.db.set("night_guard", "")
+        if reason:
+            await notify(bot, f"↩️ Автоматический откат: {html.escape(reason)}.\n"
+                              f"Работает прежняя версия {config.VERSION}, версия {previous} пропущена — "
+                              "ночью поставится только следующая.", silent=True)
+        else:
+            await notify(bot, f"↩️ Бот возвращён на версию {config.VERSION} (была {previous}). "
+                              "Вернуться на новую — ⬆️ Обновления → ⬆️ Обновить бота."
+                              + ("\nНочное автообновление эту версию пропустит и поставит только следующую."
+                                 if service.db.get("autoupdate", "0") == "1" else ""))
     elif previous and previous != config.VERSION:
         news = changelog.local_between(previous, config.VERSION)
         head = "🌙 Ночное автообновление" if auto else "✅ Бот обновлён"
