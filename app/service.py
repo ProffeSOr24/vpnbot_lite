@@ -79,6 +79,39 @@ def fmt_bytes(n: int | None) -> str:
     return ""
 
 
+ONLINE_WINDOW = 180   # s: active within this window counts as online (AWG renews the handshake every 2 minutes)
+ACTIVE_BYTES = 2048   # B per minute: below this a VLESS client is just idle keepalives
+
+
+def fmt_duration(seconds: int) -> str:
+    minutes = seconds // 60
+    if minutes < 1:
+        return "меньше минуты"
+    if minutes < 60:
+        return f"{minutes} мин"
+    hours, minutes = divmod(minutes, 60)
+    if hours < 24:
+        return f"{hours} ч {minutes} мин"
+    days, hours = divmod(hours, 24)
+    return f"{days} дн {hours} ч"
+
+
+def fmt_ago(ts: int) -> str:
+    """«5 мин назад», «вчера в 23:40», «12.10 в 18:05»"""
+    delta = int(time.time()) - ts
+    if delta < 3600:
+        return f"{max(1, delta // 60)} мин назад"
+    if delta < 6 * 3600:
+        return f"{delta // 3600} ч назад"
+    day = time.strftime("%d.%m", time.localtime(ts))
+    hm = time.strftime("%H:%M", time.localtime(ts))
+    if day == time.strftime("%d.%m"):
+        return f"сегодня в {hm}"
+    if day == time.strftime("%d.%m", time.localtime(time.time() - 86400)):
+        return f"вчера в {hm}"
+    return f"{day} в {hm}"
+
+
 PROTOS = {"both": "🔗📡 VLESS + AmneziaWG", "vless": "🔗 только VLESS", "awg": "📡 только AmneziaWG"}
 
 
@@ -374,17 +407,48 @@ class Service:
 
     async def collect_stats(self) -> None:
         stats: dict[str, list[int]] = {}
+        active: dict[str, tuple[str, str]] = {}  # name -> (via, ip): who did something since the last call
         awg_names = {u["awg_public"]: u["name"] for u in self.db.users() if u["awg_public"]}
-        for part in (await self.xray.pop_stats(),
-                     await self.hysteria.pop_stats(self.db.get("hy_stats_secret", "")),
-                     await self.awg.pop_stats(awg_names)):
+        for via, part in (("VLESS", await self.xray.pop_stats()),
+                          ("Hysteria2", await self.hysteria.pop_stats(self.db.get("hy_stats_secret", ""))),
+                          ("AmneziaWG", await self.awg.pop_stats(awg_names))):
             for name, (up, down) in part.items():
                 acc = stats.setdefault(name, [0, 0])
                 acc[0] += up
                 acc[1] += down
+                if up + down > ACTIVE_BYTES:
+                    active[name] = (via, "")
+        now = int(time.time())
+        for public, (handshake, endpoint) in (await self.awg.handshakes()).items():
+            if public in awg_names and now - handshake < ONLINE_WINDOW:
+                active[awg_names[public]] = ("AmneziaWG", endpoint.rsplit(":", 1)[0])
         for name, (up, down) in stats.items():
             if up or down:
                 self.db.add_traffic(name, up, down)
+        self.update_presence(active, now)
+
+    def update_presence(self, active: dict[str, tuple[str, str]], now: int) -> None:
+        for u in self.db.users():
+            if u["name"] not in active:
+                continue
+            via, ip = active[u["name"]]
+            fresh = not u["last_seen"] or now - u["last_seen"] >= ONLINE_WINDOW  # a new session starts
+            self.db.update_user(u["id"], last_seen=now, last_via=via,
+                                **({"online_since": now} if fresh or not u["online_since"] else {}),
+                                **({"last_ip": ip} if ip else {}))
+
+    @staticmethod
+    def presence(user) -> tuple[bool, str]:
+        """(online now?, text for the card)"""
+        seen = user["last_seen"] if "last_seen" in user.keys() else None
+        if not seen:
+            return False, "ещё не подключался"
+        now = int(time.time())
+        if now - seen < ONLINE_WINDOW:
+            since = fmt_duration(now - (user["online_since"] or seen))
+            ip = f", {user['last_ip']}" if user["last_ip"] else ""
+            return True, f"🟢 онлайн {since} — {user['last_via']}{ip}"
+        return False, f"⚪️ не в сети, был {fmt_ago(seen)} ({user['last_via']})"
 
     async def enforce_limits(self) -> list[str]:
         """Disable users that are expired or out of traffic. Returns the reasons for notifications."""

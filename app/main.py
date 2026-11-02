@@ -143,7 +143,10 @@ async def main() -> None:
 
     previous = service.db.get("bot_version")
     service.db.set("bot_version", config.VERSION)
-    if previous and previous != config.VERSION:
+    if previous and changelog.newer(previous, config.VERSION):
+        await notify(bot, f"↩️ Бот возвращён на версию {config.VERSION} (была {previous}). "
+                          "Вернуться на новую — ⬆️ Обновления → ⬆️ Обновить бота.")
+    elif previous and previous != config.VERSION:
         news = changelog.local_between(previous, config.VERSION)
         await notify(bot, f"✅ Бот обновлён: {previous} → {config.VERSION}"
                           + (f"\n\n<b>Что нового</b>\n\n{news}" if news else ""))

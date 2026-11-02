@@ -559,6 +559,21 @@ class AmneziaWG(Core):
                 if (await run("iptables", "-t", table, "-D", chain, *spec))[0] != 0:
                     break
 
+    async def handshakes(self) -> dict[str, tuple[int, str]]:
+        """public key -> (last handshake, unix time; client address). Devices renew the handshake every 2 minutes
+        while connected, so a recent one means «online»."""
+        if not self.running:
+            return {}
+        code, out = await run(self.awg, "show", config.AWG_IFACE, "dump")
+        if code != 0:
+            return {}
+        peers = {}
+        for line in out.splitlines()[1:]:  # the first line is the interface itself
+            parts = line.split("\t")
+            if len(parts) >= 5 and parts[4].isdigit():
+                peers[parts[0]] = (int(parts[4]), parts[2] if parts[2] != "(none)" else "")
+        return peers
+
     async def pop_stats(self, names: dict[str, str]) -> dict[str, list[int]]:
         """Traffic since the previous call. `names` maps public key -> user name."""
         if not self.running:

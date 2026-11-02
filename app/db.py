@@ -31,7 +31,9 @@ CREATE TABLE IF NOT EXISTS settings (
 
 # columns added after the first release: (name, type)
 MIGRATIONS = [("awg_private", "TEXT"), ("awg_public", "TEXT"), ("awg_psk", "TEXT"), ("awg_ip", "TEXT"),
-              ("proto", "TEXT NOT NULL DEFAULT 'both'")]  # both | vless | awg — what the user gets
+              ("proto", "TEXT NOT NULL DEFAULT 'both'"),  # both | vless | awg — what the user gets
+              # presence: last activity, start of the current session, via what and from where
+              ("last_seen", "INTEGER"), ("online_since", "INTEGER"), ("last_via", "TEXT"), ("last_ip", "TEXT")]
 
 
 def wg_keypair() -> tuple[str, str]:

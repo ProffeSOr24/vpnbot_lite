@@ -24,7 +24,10 @@ jobs:
         run: |
           owner="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
           tag="$(echo '${{ github.ref_name }}' | tr '/' '-')"
-          echo "ref=ghcr.io/${owner}/vpnbot-lite:${tag}" >> "$GITHUB_OUTPUT"
+          image="ghcr.io/${owner}/vpnbot-lite"
+          echo "ref=${image}:${tag}" >> "$GITHUB_OUTPUT"
+          # every version stays in the registry for ./vpn.sh rollback: :main-1.18.0
+          echo "versioned=${image}:${tag}-$(cat VERSION)" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v3
 
@@ -39,7 +42,9 @@ jobs:
           context: .
           platforms: linux/amd64
           push: true
-          tags: ${{ steps.image.outputs.ref }}
+          tags: |
+            ${{ steps.image.outputs.ref }}
+            ${{ steps.image.outputs.versioned }}
           labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

@@ -129,7 +129,8 @@ def setup(service: Service) -> Router:
         only = last_only if only is None else only
         page = (last_page if only == last_only else 0) if page is None else page
         everyone = db.users()
-        shown = [u for u in everyone if not only or uses(u, only)]
+        online = {u["id"] for u in everyone if service.presence(u)[0]}
+        shown = [u for u in everyone if not only or (u["id"] in online if only == "online" else uses(u, only))]
         shown.sort(key=lambda u: (list(ICON).index(u["proto"]), u["name"].lower()))
         pages = max(1, -(-len(shown) // PAGE))
         page = min(max(page, 0), pages - 1)
@@ -137,24 +138,26 @@ def setup(service: Service) -> Router:
         b = InlineKeyboardBuilder()
         for u in shown[page * PAGE:(page + 1) * PAGE]:
             used = fmt_bytes(u["up"] + u["down"])
-            b.button(text=f"{service.user_status(u)} {ICON[u['proto']]} {u['name']} · {used}",
+            dot = "🟢" if u["id"] in online else "⚪️"
+            b.button(text=f"{dot}{service.user_status(u)} {ICON[u['proto']]} {u['name']} · {used}",
                      callback_data=f"u:{u['id']}")
         b.adjust(1)
         if pages > 1:
             b.row(*kb([("◀️", f"up:{page - 1}" if page else "noop"), (f"{page + 1} / {pages}", "noop"),
                        ("▶️", f"up:{page + 1}" if page < pages - 1 else "noop")]).inline_keyboard[0])
         mark = lambda key: "• " if only == key else ""  # noqa: E731
-        b.row(*kb([(f"{mark('')}Все", "uf:"), (f"{mark('vless')}🔗 VLESS", "uf:vless"),
-                   (f"{mark('awg')}📡 AmneziaWG", "uf:awg")]).inline_keyboard[0])
+        b.row(*kb([(f"{mark('')}Все", "uf:"), (f"{mark('online')}🟢 Онлайн", "uf:online"),
+                   (f"{mark('vless')}🔗 VLESS", "uf:vless"), (f"{mark('awg')}📡 AWG", "uf:awg")]).inline_keyboard[0])
         b.row(*kb([("➕ Добавить", "add"), *BACK]).inline_keyboard[0])
         if everyone:
             b.row(*kb([("🔁 Доступ для всех", "protoall"), ("🗑 Удалить всех", "delall")]).inline_keyboard[0])
         counts = {k: sum(1 for u in everyone if u["proto"] == k) for k in ICON}
         text = ("<b>Пользователи</b>\n"
+                f"🟢 Сейчас онлайн: <b>{len(online)}</b> из {len(everyone)}\n"
                 f"🔗📡 VLESS + AmneziaWG: {counts['both']}   🔗 только VLESS: {counts['vless']}   "
                 f"📡 только AmneziaWG: {counts['awg']}\n"
                 + (f"Показано: {len(shown)} из {len(everyone)}\n" if only else "") +
-                "✅ активен  ⏳ скоро истекает  ⏸ отключён")
+                "🟢 в сети  ⚪️ не в сети · ✅ активен  ⏳ скоро истекает  ⏸ отключён")
         await show(target, text, b.as_markup())
 
     @router.callback_query(F.data == "users")
@@ -200,7 +203,8 @@ def setup(service: Service) -> Router:
                 f"Трафик: ↑{fmt_bytes(u['up'])} ↓{fmt_bytes(u['down'])} = "
                 f"<b>{fmt_bytes(u['up'] + u['down'])}</b> / {limit}\n"
                 f"Создан: {fmt_date(u['created_at'])}\n"
-                f"Доступ: {PROTOS[u['proto']]}")
+                f"Доступ: {PROTOS[u['proto']]}\n"
+                f"Сейчас: {service.presence(u)[1]}")
         i = u["id"]
         get = [b for b in (("🔗 Ключи и QR", f"links:{i}") if uses(u, "vless") else None,
                            ("📡 AWG приложение", f"awg:{i}") if uses(u, "awg") else None,
@@ -578,8 +582,36 @@ def setup(service: Service) -> Router:
         else:
             lines.append(f"бот: {config.VERSION}" + (" ✅ актуальная" if remote else ""))
         rows.append([("⬆️ Обновить бота", "updbot")])
+        previous = rollback_target()
+        if previous:
+            rows.append([(f"↩️ Вернуть бота на {previous}", "rollbot")])
         rows.append([("🔄 Проверить снова", "updates"), *BACK])
         await show(cb, "\n".join(lines), kb(*rows))
+
+    def rollback_target() -> str:
+        """The version before the last update, if the host saved it (data/rollback.info: "<commit> <version>")."""
+        try:
+            return (config.DATA_DIR / "rollback.info").read_text().split()[1]
+        except (OSError, IndexError):
+            return ""
+
+    @router.callback_query(F.data == "rollbot")
+    async def rollback_bot(cb: CallbackQuery) -> None:
+        previous = rollback_target()
+        if not previous:
+            await cb.answer("Нет сохранённой предыдущей версии", show_alert=True)
+            return
+        await show(cb, f"Вернуть бота на версию <b>{previous}</b> (сейчас {config.VERSION})?\n\n"
+                       "Пользователи и ключи сохранятся. VPN пропадёт на 10–30 секунд. "
+                       "Снова обновиться можно в любой момент кнопкой «⬆️ Обновить бота».",
+                   kb([(f"↩️ Да, вернуть {previous}", "rollbotok")], [("Отмена", "updates")]))
+
+    @router.callback_query(F.data == "rollbotok")
+    async def rollback_bot_ok(cb: CallbackQuery) -> None:
+        (config.DATA_DIR / "update.request").write_text("rollback")
+        await cb.answer()
+        await cb.message.answer("⏳ Возвращаю предыдущую версию (1–3 минуты), после чего придёт сообщение.\n\n"
+                                "Если ничего не произошло — на сервере: <code>./vpn.sh rollback</code>")
 
     def core_by_name(name: str):
         return {"xray": service.xray, "hysteria": service.hysteria, "amneziawg": service.awg,

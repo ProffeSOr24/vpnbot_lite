@@ -2,6 +2,7 @@
 # VPN Bot Lite — установка и обслуживание.
 #   ./vpn.sh install [BOT_TOKEN] [ADMIN_ID]   установка (Docker, настройки ядра, автообновление)
 #   ./vpn.sh update                           обновить бота из git и пересобрать
+#   ./vpn.sh rollback                         вернуть версию, которая была до последнего обновления
 #   ./vpn.sh https [ПОРТ]                     подписки по https (бесплатный адрес IP.nip.io + Let's Encrypt; ПОРТ — публичный, например текущий 2097)
 #   ./vpn.sh ddns ИМЯ ТОКЕН [IP]              свой адрес ИМЯ.duckdns.org вместо IP — при смене IP устройства менять не нужно
 #   ./vpn.sh stealth [off]                    максимальная маскировка: VLESS на 443/8443, SNI = свой домен, сайт-приманка
@@ -423,13 +424,26 @@ cmd_cleanup() {
 }
 
 cmd_update() {
-    # the bot asks for a cleanup through the same systemd unit as for an update
+    # the bot asks for a cleanup or a rollback through the same systemd unit as for an update
     if grep -q '^cleanup' data/update.request 2>/dev/null; then
         rm -f data/update.request
         cmd_cleanup
         return
     fi
+    if grep -q '^rollback' data/update.request 2>/dev/null; then
+        rm -f data/update.request
+        cmd_rollback
+        return
+    fi
     rm -f data/update.request
+    local old_head old_ver image
+    old_head="$(git rev-parse HEAD 2>/dev/null || true)"
+    old_ver="$(cat VERSION)"
+    image="$(env_get VPNBOT_IMAGE)"
+    # keep the running image: rollback needs neither GitHub nor a rebuild
+    if [ -n "$image" ] && docker image inspect "$image" >/dev/null 2>&1; then
+        docker tag "$image" vpnbot-lite:previous
+    fi
     if [ -d .git ] || git rev-parse --git-dir >/dev/null 2>&1; then
         log "Скачиваю новую версию"
         git pull --ff-only
@@ -443,22 +457,56 @@ cmd_update() {
     get_image
     docker compose up -d
     docker image prune -f >/dev/null || true
+    if [ -n "$old_head" ] && [ "$(cat VERSION)" != "$old_ver" ]; then
+        echo "$old_head $old_ver" > data/rollback.info   # what ./vpn.sh rollback returns to
+    fi
     log "Обновлено до $(cat VERSION)"
+}
+
+cmd_rollback() {
+    local head ver image base
+    [ -s data/rollback.info ] || die "нет сохранённой предыдущей версии (откат возможен после обновления)"
+    read -r head ver < data/rollback.info
+    image="$(env_get VPNBOT_IMAGE)"
+    [ -n "$image" ] || image="vpnbot-lite:local"
+    log "Возвращаю версию $ver (сейчас $(cat VERSION))"
+    if docker image inspect vpnbot-lite:previous >/dev/null 2>&1 \
+        && [ "$(docker run --rm --entrypoint cat vpnbot-lite:previous /srv/VERSION 2>/dev/null)" = "$ver" ]; then
+        docker tag vpnbot-lite:previous "$image"
+        log "Образ $ver взят с этого сервера"
+    else
+        base="${image%:*}"
+        if [ "$image" != "vpnbot-lite:local" ] && docker pull -q "$base:$(git rev-parse --abbrev-ref HEAD | tr '/' '-')-$ver" >/dev/null 2>&1; then
+            docker tag "$base:$(git rev-parse --abbrev-ref HEAD | tr '/' '-')-$ver" "$image"
+            log "Образ $ver скачан с GitHub"
+        else
+            image=""   # build after checking out the old code
+        fi
+    fi
+    git reset -q --hard "$head"   # code and VERSION of the old version; the next ./vpn.sh update goes forward again
+    if [ -z "$image" ]; then
+        log "Готового образа $ver нет — собираю на сервере (10–20 минут)"
+        docker compose build
+    fi
+    docker compose up -d --force-recreate
+    rm -f data/rollback.info
+    log "Откат готов: работает версия $ver. Вернуться на новую: ./vpn.sh update"
 }
 
 case "${1:-}" in
     install) shift; cmd_install "$@" ;;
-    update) cmd_update ;;
+    update) cmd_update; exit 0 ;;
     https) shift; cmd_https "$@" ;;
     https-cert) shift; cmd_https_cert "$@" ;;
     ddns) shift; cmd_ddns "$@" ;;
     stealth) shift; cmd_stealth "$@" ;;
     doctor) cmd_doctor ;;
     cleanup) cmd_cleanup ;;
+    rollback) need_root; cmd_rollback; exit 0 ;;
     import-awg) shift; cmd_import_awg "$@" ;;
     restart) docker compose up -d --force-recreate ;;  # пересоздать: подхватывает изменения .env
     stop) docker compose down ;;
     status) docker compose ps ;;
     logs) docker compose logs -f --tail=200 ;;
-    *) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+    *) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

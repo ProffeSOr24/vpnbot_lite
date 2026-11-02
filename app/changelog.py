@@ -11,6 +11,11 @@ def _key(version: str) -> tuple[int, ...]:
     return tuple(int(x) for x in re.findall(r"\d+", version))
 
 
+def newer(a: str, b: str) -> bool:
+    """Is version a newer than b?"""
+    return _key(a) > _key(b)
+
+
 def sections(text: str) -> list[tuple[str, str]]:
     """[(версия, текст раздела без заголовка)] в порядке файла (новые сверху)."""
     marks = list(HEADING.finditer(text))
