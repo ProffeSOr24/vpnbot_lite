@@ -820,34 +820,87 @@ def setup(service: Service) -> Router:
         await show(message, *settings_view())
 
     # ---------- backup ----------
+    def backup_kb() -> InlineKeyboardMarkup:
+        on = db.get("backup_auto", "1") == "1"
+        return kb([(f"🗓 Автобэкап каждую ночь: {'вкл' if on else 'выкл'}", "backup_auto")], BACK)
+
     @router.callback_query(F.data == "backup")
     async def backup(cb: CallbackQuery) -> None:
         await cb.answer()
         await send_backup(service, cb.bot, cb.from_user.id)
-        await cb.message.answer("Чтобы восстановить — просто отправьте этот файл боту.")
+        await cb.message.answer(
+            "Чтобы восстановить — перешлите файл бэкапа боту, он покажет, что в нём, и спросит подтверждение.\n\n"
+            "🗓 Автобэкап: каждую ночь (около 4:30 по Москве) бот присылает бэкап без звука, если за день что-то "
+            "поменялось — пользователи, сроки, лимиты, ключи, настройки.", reply_markup=backup_kb())
+
+    @router.callback_query(F.data == "backup_auto")
+    async def backup_auto(cb: CallbackQuery) -> None:
+        db.set("backup_auto", "0" if db.get("backup_auto", "1") == "1" else "1")
+        await cb.answer()
+        await cb.message.edit_reply_markup(reply_markup=backup_kb())
+
+    def pending_restore(admin: int) -> Path:
+        return config.DATA_DIR / f"restore-{admin}.db"
 
     @router.message(F.document)
     async def restore(message: Message, state: FSMContext) -> None:
         if not (message.document.file_name or "").endswith(".db"):
             await message.answer("Для восстановления отправьте файл бэкапа <code>.db</code>.")
             return
-        with tempfile.TemporaryDirectory(dir=config.DATA_DIR) as tmp:
-            path = Path(tmp) / "restore.db"
-            await message.bot.download(message.document, destination=path)
-            if not db.is_valid_backup(path):
-                await message.answer("❌ Это не бэкап VPN Bot Lite.")
-                return
-            await service.collect_stats()
-            db.close()
-            for suffix in ("-wal", "-shm"):
-                Path(str(db.path) + suffix).unlink(missing_ok=True)
-            os.replace(path, db.path)
-            db.open()
+        path = pending_restore(message.from_user.id)
+        await message.bot.download(message.document, destination=path)
+        summary = db.backup_summary(path) if db.is_valid_backup(path) else None
+        if summary is None:
+            path.unlink(missing_ok=True)
+            await message.answer("❌ Это не бэкап VPN Bot Lite.")
+            return
         await state.clear()
+        stamp = re.search(r"(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})", message.document.file_name or "")
+        when = f"{stamp[3]}.{stamp[2]}.{stamp[1]} {stamp[4]}:{stamp[5]}" if stamp else "неизвестной даты"
+        old, new = {u["name"] for u in db.users()}, set(summary["names"])
+
+        def names(items: set[str]) -> str:
+            items = sorted(items)
+            return ", ".join(html.escape(n) for n in items[:15]) + (f" и ещё {len(items) - 15}" if len(items) > 15 else "")
+
+        lines = [f"💾 <b>Бэкап от {when}</b>",
+                 f"Пользователей в бэкапе: <b>{len(new)}</b> (сейчас на сервере: {len(old)})"]
+        if new - old:
+            lines.append(f"➕ Вернутся: {names(new - old)}")
+        if old - new:
+            lines.append(f"➖ Пропадут (их нет в бэкапе): {names(old - new)}")
+        if new == old:
+            lines.append("Список пользователей тот же; восстановятся сроки, лимиты, ключи и настройки из бэкапа.")
+        lines.append("\nПеред восстановлением бот пришлёт бэкап текущего состояния — чтобы можно было вернуть.")
+        await message.answer("\n".join(lines), reply_markup=kb([("✅ Восстановить", "restore_ok"),
+                                                                 ("Отмена", "restore_no")]))
+
+    @router.callback_query(F.data == "restore_no")
+    async def restore_cancel(cb: CallbackQuery) -> None:
+        pending_restore(cb.from_user.id).unlink(missing_ok=True)
+        await cb.answer("Отменено")
+        await cb.message.edit_text("Восстановление отменено, ничего не изменилось.")
+
+    @router.callback_query(F.data == "restore_ok")
+    async def restore_confirm(cb: CallbackQuery) -> None:
+        path = pending_restore(cb.from_user.id)
+        if not path.exists() or not db.is_valid_backup(path):
+            path.unlink(missing_ok=True)
+            await cb.answer("Файл уже использован или устарел — отправьте его ещё раз", show_alert=True)
+            return
+        await cb.answer("Восстанавливаю…")
+        await cb.message.edit_reply_markup(reply_markup=None)
+        await send_backup(service, cb.bot, cb.from_user.id, "💾 Бэкап перед восстановлением — вернуть, если что")
+        await service.collect_stats()
+        db.close()
+        for suffix in ("-wal", "-shm"):
+            Path(str(db.path) + suffix).unlink(missing_ok=True)
+        os.replace(path, db.path)
+        db.open()
         service.init_settings()
         await service.awg.stop()  # the restored server key/parameters need a fresh interface
-        await apply(message)
-        await message.answer(f"✅ Восстановлено. Пользователей: {len(db.users())}", reply_markup=menu_markup())
+        await apply(cb)
+        await cb.message.answer(f"✅ Восстановлено. Пользователей: {len(db.users())}", reply_markup=menu_markup())
 
     # ---------- logs ----------
     @router.callback_query(F.data == "logs")
@@ -874,8 +927,9 @@ def setup(service: Service) -> Router:
     return router
 
 
-async def send_backup(service: Service, bot: Bot, chat_id: int) -> None:
+async def send_backup(service: Service, bot: Bot, chat_id: int, caption: str = "💾 Бэкап VPN Bot Lite",
+                      silent: bool = False) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / f"vpnbot-{time.strftime('%Y%m%d-%H%M')}.db"
         service.db.backup_to(path)
-        await bot.send_document(chat_id, FSInputFile(path), caption="💾 Бэкап VPN Bot Lite")
+        await bot.send_document(chat_id, FSInputFile(path), caption=caption, disable_notification=silent)

@@ -16,13 +16,14 @@ from aiogram.types import BotCommand
 from aiohttp import web
 
 from . import changelog, config, report, watch
-from .bot import setup
+from .bot import send_backup, setup
 from .service import MSK, Service
 from .sub import make_app
 
 log = logging.getLogger("vpnbot")
 AUTOUPDATE_HOUR = 3          # MSK: night auto-update window 03:00–04:00
 AUTOUPDATE_DELAY = 6 * 3600  # a new version must be on GitHub this long before servers take it
+BACKUP_AT = (4, 30)          # MSK: nightly backup, after the auto-update window
 GUARD_EVERY = 600            # after a night update: health check every 10 minutes …
 GUARD_BAD = 4                # … 4 failures in a row (~40 minutes) roll the bot back
 GUARD_WINDOW = 90 * 60       # … watched for an hour and a half
@@ -204,6 +205,30 @@ async def night_guard(service: Service, bot: Bot, now: float) -> None:
 JOBS: set[asyncio.Task] = set()  # keep references so running jobs are not garbage-collected
 
 
+async def auto_backup(service: Service, bot: Bot, now: float) -> None:
+    """Every night: send the database to the admins (silently) if users or settings changed since the last one."""
+    db = service.db
+    moment = datetime.datetime.fromtimestamp(now, MSK)
+    today = moment.strftime("%Y-%m-%d")
+    if db.get("backup_auto", "1") != "1" or (moment.hour, moment.minute) < BACKUP_AT or db.get("backup_ts") == today:
+        return
+    db.set("backup_ts", today)
+    fp = db.fingerprint()
+    if fp == db.get("backup_fp"):
+        return
+    caption = (f"💾 Автобэкап {moment:%d.%m.%Y} — пользователей: {len(db.users())}\n"
+               "Восстановить: переслать этот файл боту.")
+    sent = False
+    for admin in config.ADMIN_IDS:
+        try:
+            await send_backup(service, bot, admin, caption, silent=True)
+            sent = True
+        except TelegramAPIError as e:
+            log.warning("cannot send backup to %s: %s", admin, e)
+    if sent:
+        db.set("backup_fp", fp)
+
+
 async def safe(job) -> None:
     try:
         await job
@@ -225,6 +250,7 @@ async def background(service: Service, bot: Bot, ssl_ctx: ssl.SSLContext | None)
             task.add_done_callback(JOBS.discard)
             sampler.tick(service, now)
             await auto_update(service, now)
+            await auto_backup(service, bot, now)
             if report.due(service, now):
                 text = report.build(service, now)
                 report.mark_sent(service, now)

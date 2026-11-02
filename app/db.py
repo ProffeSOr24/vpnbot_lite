@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import ipaddress
 import secrets
 import sqlite3
@@ -187,6 +188,33 @@ class DB:
         with target:
             self.conn.backup(target)
         target.close()
+
+    # settings that change by themselves (timestamps, last results): not a reason for a new backup
+    VOLATILE = {"autoupdate_check", "autoupdate_day", "autoupdate_pending", "autoupdate_seen", "bot_version",
+                "ddns_ip", "disk_alert_ts", "disk_clean_ts", "night_guard", "report_week", "watch_last",
+                "watch_state", "backup_fp", "backup_ts"}
+    USER_VOLATILE = {"up", "down", "last_seen", "online_since", "last_via", "last_ip"}
+
+    def fingerprint(self) -> str:
+        """Hash of what a restore must bring back: users with their keys and limits, and the settings."""
+        h = hashlib.sha256()
+        for u in self.conn.execute("SELECT * FROM users ORDER BY id"):
+            h.update(repr([(k, u[k]) for k in u.keys() if k not in self.USER_VOLATILE]).encode())
+        for r in self.conn.execute("SELECT key, value FROM settings ORDER BY key"):
+            if r["key"] not in self.VOLATILE:
+                h.update(f"{r['key']}={r['value']}\n".encode())
+        return h.hexdigest()
+
+    @staticmethod
+    def backup_summary(path: Path) -> dict | None:
+        """Users in a backup file (read-only), or None if it is not a VPN Bot Lite backup."""
+        try:
+            conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            names = [r[0] for r in conn.execute("SELECT name FROM users ORDER BY name")]
+            conn.close()
+            return {"names": names}
+        except sqlite3.Error:
+            return None
 
     @staticmethod
     def is_valid_backup(path: Path) -> bool:
