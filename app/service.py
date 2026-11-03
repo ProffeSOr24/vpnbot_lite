@@ -129,11 +129,11 @@ class Service:
             db.set("reality_sni", DEFAULT_REALITY_SNI)
         db.conn.execute("DELETE FROM settings WHERE key LIKE 'hy\\_%' ESCAPE '\\'")  # Hysteria2 was removed in 1.25
         (config.BIN_DIR / "hysteria").unlink(missing_ok=True)
-        for key in ("announce", "support_url", "support_auto"):  # Happ extras removed in 1.28
+        for key in ("routing_ru", "announce", "support_url", "support_auto"):  # incl. «РФ напрямую», removed in 1.30  # Happ extras removed in 1.28
             db.conn.execute("DELETE FROM settings WHERE key=?", (key,))
         for k, v in (("block_ads", "0"), ("awg_enabled", "1"),
                      ("reality_nosni", "1"), ("xhttp_enabled", "1"), ("xhttp_path", "/" + secrets.token_hex(6)),
-                     ("watch_enabled", "1"), ("routing_ru", "1")):
+                     ("watch_enabled", "1")):
             if db.get(k) is None:
                 db.set(k, v)
         if not db.get("awg_private"):
