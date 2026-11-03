@@ -35,6 +35,8 @@ class Input(StatesGroup):
     limit = State()
     reality_sni = State()
     host = State()
+    announce = State()
+    support = State()
 
 
 def kb(*rows: list[tuple[str, str]]) -> InlineKeyboardMarkup:
@@ -704,7 +706,10 @@ def setup(service: Service) -> Router:
                 f"<b>AmneziaWG</b>: {on('awg_enabled')}, подсеть {config.AWG_SUBNET}, порт {config.AWG_PORT}\n"
                 f"Маскировка новых конфигов: "
                 f"{'QUIC Initial 1200 байт' if s.get('awg_client_profile', 'quic') == 'quic' else 'как у сервера'}\n"
-                f"<b>Блокировка рекламы</b>: {on('block_ads')}")
+                f"<b>Блокировка рекламы</b>: {on('block_ads')}\n\n"
+                f"<b>Happ</b>\nРФ напрямую (банки, Госуслуги, маркетплейсы — мимо VPN): {on('routing_ru')}\n"
+                f"Объявление: {html.escape(s.get('announce') or '—')}\n"
+                f"Поддержка: {html.escape(service.support_url or '—')}")
         markup = kb([("🌐 SNI Reality", "set:sni"), ("🩺 Проверить SNI", "set:check")],
                     [(f"SNI в ссылках: {'нет' if s.get('reality_nosni') == '1' else 'да'}", "set:nosni"),
                      (f"XHTTP: {on('xhttp_enabled')}", "set:xhttp")],
@@ -713,6 +718,8 @@ def setup(service: Service) -> Router:
                     [("Маскировка новых AWG-конфигов: "
                       + ("QUIC" if s.get("awg_client_profile", "quic") == "quic" else "как у сервера"), "set:awgprof")],
                     [(f"Блок рекламы: {on('block_ads')}", "set:ads"), ("📍 Адрес сервера", "set:host")],
+                    [(f"🧭 РФ напрямую в Happ: {on('routing_ru')}", "set:routing")],
+                    [("📢 Объявление в Happ", "set:announce"), ("💬 Поддержка", "set:support")],
                     BACK)
         return text, markup
 
@@ -720,6 +727,54 @@ def setup(service: Service) -> Router:
     async def settings(cb: CallbackQuery, state: FSMContext) -> None:
         await state.clear()
         await show(cb, *settings_view())
+
+    @router.callback_query(F.data == "set:routing")
+    async def toggle_routing(cb: CallbackQuery) -> None:
+        on = db.get("routing_ru", "1") != "1"
+        db.set("routing_ru", "1" if on else "0")
+        await show(cb, *settings_view())
+        await cb.message.answer(
+            "🧭 Правила «РФ напрямую» включены: Happ получит их при обновлении подписки." if on else
+            "🧭 Правила больше не рассылаются. У кого они уже есть, остаются в Happ — выключить можно "
+            "в самом Happ: Настройки → Маршрутизация.")
+
+    @router.callback_query(F.data == "set:announce")
+    async def set_announce(cb: CallbackQuery, state: FSMContext) -> None:
+        await state.set_state(Input.announce)
+        await show(cb, "📢 Отправьте текст объявления (до 200 символов) — его увидят все в Happ над списком "
+                       "серверов и на странице подписки. Например: «Сегодня в 23:00 профилактика 10 минут».\n\n"
+                       "«-» — убрать объявление.\n\nЛичные предупреждения (кончается срок или трафик, доступ "
+                       "отключён) бот показывает сам вместо объявления.", kb([("Отмена", "settings")]))
+
+    @router.message(Input.announce, F.text)
+    async def set_announce_input(message: Message, state: FSMContext) -> None:
+        await state.clear()
+        text = message.text.strip()
+        db.set("announce", "" if text == "-" else text[:200])
+        await message.answer("✅ Объявление убрано." if text == "-" else
+                             "✅ Объявление появится у всех при следующем обновлении подписки в Happ.")
+        await show(message, *settings_view())
+
+    @router.callback_query(F.data == "set:support")
+    async def set_support(cb: CallbackQuery, state: FSMContext) -> None:
+        await state.set_state(Input.support)
+        await show(cb, "💬 Кнопка «Поддержка» в Happ и на странице подписки.\n\n"
+                       f"Сейчас: {html.escape(service.support_url or 'нет')}\n\n"
+                       "Отправьте ссылку (например <code>https://t.me/username</code>), «auto» — ваш Telegram, "
+                       "«-» — убрать кнопку.", kb([("Отмена", "settings")]))
+
+    @router.message(Input.support, F.text)
+    async def set_support_input(message: Message, state: FSMContext) -> None:
+        value = message.text.strip()
+        if value not in ("-", "auto") and not re.fullmatch(r"(https://|tg://)\S+", value):
+            await message.answer("Нужна ссылка, начинающаяся с https:// (или «auto», «-»).")
+            return
+        await state.clear()
+        if value == "auto":
+            db.conn.execute("DELETE FROM settings WHERE key='support_url'")
+        else:
+            db.set("support_url", value)
+        await show(message, *settings_view())
 
     @router.callback_query(F.data.in_({"set:ads", "set:awg", "set:nosni", "set:xhttp"}))
     async def toggle_setting(cb: CallbackQuery) -> None:

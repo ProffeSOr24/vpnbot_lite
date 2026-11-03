@@ -344,6 +344,12 @@ async def main() -> None:
         await notify(bot, f"🚀 VPN Bot Lite v{config.VERSION} запущен. /menu"
                           + (f"\n⚠️ {error}" if error else ""))
 
+    try:  # default «Поддержка» link: the first admin's Telegram, if they have a username
+        admin = await bot.get_chat(config.ADMIN_IDS[0])
+        service.db.set("support_auto", f"https://t.me/{admin.username}" if admin.username else "")
+    except TelegramAPIError as e:
+        log.warning("cannot read the admin's username: %s", e)
+
     # a webhook left by another bot on the same token (e.g. the old vpnbot) blocks polling
     await bot.delete_webhook(drop_pending_updates=False)
     task = asyncio.create_task(background(service, bot, ssl_ctx))

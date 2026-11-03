@@ -131,7 +131,7 @@ class Service:
         (config.BIN_DIR / "hysteria").unlink(missing_ok=True)
         for k, v in (("block_ads", "0"), ("awg_enabled", "1"),
                      ("reality_nosni", "1"), ("xhttp_enabled", "1"), ("xhttp_path", "/" + secrets.token_hex(6)),
-                     ("watch_enabled", "1")):
+                     ("watch_enabled", "1"), ("routing_ru", "1")):
             if db.get(k) is None:
                 db.set(k, v)
         if not db.get("awg_private"):
@@ -211,6 +211,14 @@ class Service:
                     self.db.set("country", code)
                     self.db.set("country_ts", int(time.time()))
                     return
+
+    @property
+    def support_url(self) -> str:
+        """«Поддержка» button in Happ and on the subscription page: set by the admin, else the admin's Telegram."""
+        value = self.db.get("support_url")
+        if value == "-":
+            return ""
+        return value or self.db.get("support_auto") or ""
 
     @property
     def country(self) -> str:
