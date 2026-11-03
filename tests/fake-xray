@@ -1,0 +1,2 @@
+#!/bin/sh
+case "$1" in version) echo "Xray 26.10.31 (fake)";; run) case "$*" in *-test*) echo "Configuration OK";; *) exec sleep 3600;; esac;; esac

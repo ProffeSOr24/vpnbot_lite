@@ -730,7 +730,7 @@ def setup(service: Service) -> Router:
 
     @router.callback_query(F.data == "set:routing")
     async def toggle_routing(cb: CallbackQuery) -> None:
-        on = db.get("routing_ru", "1") != "1"
+        on = db.get("routing_ru", "0") != "1"
         db.set("routing_ru", "1" if on else "0")
         await show(cb, *settings_view())
         await cb.message.answer(
@@ -760,20 +760,16 @@ def setup(service: Service) -> Router:
         await state.set_state(Input.support)
         await show(cb, "💬 Кнопка «Поддержка» в Happ и на странице подписки.\n\n"
                        f"Сейчас: {html.escape(service.support_url or 'нет')}\n\n"
-                       "Отправьте ссылку (например <code>https://t.me/username</code>), «auto» — ваш Telegram, "
-                       "«-» — убрать кнопку.", kb([("Отмена", "settings")]))
+                       "Отправьте ссылку, например <code>https://t.me/username</code>. «-» — убрать кнопку.", kb([("Отмена", "settings")]))
 
     @router.message(Input.support, F.text)
     async def set_support_input(message: Message, state: FSMContext) -> None:
         value = message.text.strip()
-        if value not in ("-", "auto") and not re.fullmatch(r"(https://|tg://)\S+", value):
-            await message.answer("Нужна ссылка, начинающаяся с https:// (или «auto», «-»).")
+        if value != "-" and not re.fullmatch(r"(https://|tg://)\S+", value):
+            await message.answer("Нужна ссылка, начинающаяся с https:// (или «-», чтобы убрать).")
             return
         await state.clear()
-        if value == "auto":
-            db.conn.execute("DELETE FROM settings WHERE key='support_url'")
-        else:
-            db.set("support_url", value)
+        db.set("support_url", value)
         await show(message, *settings_view())
 
     @router.callback_query(F.data.in_({"set:ads", "set:awg", "set:nosni", "set:xhttp"}))

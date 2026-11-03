@@ -175,7 +175,7 @@ def make_app(service: Service) -> web.Application:
             headers["announce"] = happ.b64(note)
         if service.support_url:
             headers["support-url"] = service.support_url
-        if links and service.db.get("routing_ru", "1") == "1":
+        if links and service.db.get("routing_ru", "0") == "1":
             headers["routing"] = happ.routing_link()
         payload = base64.b64encode("\n".join(links).encode()).decode()
         return web.Response(text=payload, headers=headers)

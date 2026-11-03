@@ -19,6 +19,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # a version that does not start is never built — servers keep the previous image
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check the bot starts
+        run: |
+          pip install -q -r requirements.txt pyflakes
+          python -m pyflakes app tests
+          python tests/startup_test.py
+
       - name: Image name
         id: image
         run: |
