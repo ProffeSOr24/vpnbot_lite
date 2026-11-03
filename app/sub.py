@@ -1,6 +1,7 @@
 """HTTP subscription server: /sub/<token> returns links for Happ / v2RayTun / Hiddify / v2rayN, and a page with
 instructions when opened in a browser."""
 import base64
+import datetime
 import html
 import io
 import time
@@ -9,7 +10,6 @@ from string import Template
 import qrcode
 from aiohttp import web
 
-from . import happ
 from .service import Service, fmt_bytes, uses
 
 HAPP_IOS = "https://apps.apple.com/us/app/happ-proxy-utility/id6504287215"
@@ -40,7 +40,6 @@ h1{font-size:21px;margin:0}h2{font-size:17px;margin:0 0 12px}.muted{color:var(--
 .stat{background:var(--chip);border-radius:12px;padding:10px 12px}.stat b{display:block;font-size:17px}
 .bar{height:8px;background:var(--line);border-radius:99px;overflow:hidden;margin-top:8px}
 .bar i{display:block;height:100%;background:var(--accent);border-radius:99px}
-.notice{border-left:4px solid var(--warn)}
 .btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:14px;border:0;
 border-radius:14px;background:var(--accent);color:#fff;font-size:17px;font-weight:600;text-decoration:none;
 cursor:pointer;margin-top:10px}.btn:active{background:var(--accent2)}
@@ -58,10 +57,8 @@ margin-top:8px}details{margin-top:10px}summary{cursor:pointer;color:var(--accent
 <div class="stats"><div class="stat"><span class="muted">Действует</span><b>$expire</b></div>
 <div class="stat"><span class="muted">Трафик</span><b>$used</b><span class="muted">$limit</span>$bar</div></div>
 </div>
-$notice
 $vless_block
 $awg_block
-$support_block
 <div class="foot">Ссылка личная — не пересылайте её другим людям.</div>
 </div>
 <script>
@@ -81,8 +78,7 @@ VLESS_BLOCK = Template("""
 <a class="btn" href="$deeplink">➕ Добавить в Happ</a>
 <button class="btn alt" onclick="copy('sub',this)">📋 Скопировать ссылку</button>
 <code id="sub">$sub</code>
-<p class="muted">Затем в Happ выберите сервер и нажмите большую кнопку включения.
-Сайты в России (банки, Госуслуги, маркетплейсы) открываются напрямую, остальное — через VPN.</p>
+<p class="muted">Затем в Happ выберите сервер и нажмите большую кнопку включения.</p>
 <details><summary>Показать QR-код (для другого устройства)</summary>
 <div class="qr"><img src="$sub?qr=1" alt="QR-код подписки"></div>
 <p class="muted">В Happ: «+» → «Сканировать QR-код».</p></details>
@@ -90,8 +86,8 @@ VLESS_BLOCK = Template("""
 <div class="card faq"><h2>❓ Если не работает</h2>
 <b>Не подключается</b><span class="muted">В Happ потяните список вниз, чтобы обновить подписку, и выберите
 другой сервер: XHTTP вместо Reality или наоборот. На мобильном интернете обычно лучше работает XHTTP.</span>
-<b>Банк или сайт пишет про VPN</b><span class="muted">Обновите подписку: правила «Россия напрямую» приходят с ней.
-Если не помогло — на время выключите VPN.</span>
+<b>Банк или сайт пишет про VPN</b><span class="muted">Некоторые российские сервисы не работают с зарубежного
+IP — на время выключите VPN.</span>
 <b>Медленно</b><span class="muted">Попробуйте другой сервер из списка и Wi-Fi вместо мобильной сети.</span>
 </div>""")
 
@@ -103,6 +99,11 @@ AWG_BLOCK = Template("""
 <ol start="2"><li><b>Скачайте конфиг</b> и откройте его в AmneziaWG (или в приложении: «+» → «Импорт из файла»):</li></ol>
 <a class="btn" href="$conf">⬇️ Скачать конфиг</a>
 </div>""")
+
+
+def days_left(ts: float, now: float) -> int:
+    """Calendar days from today to the date of ts: 0 — today, 1 — tomorrow."""
+    return datetime.date.fromtimestamp(ts).toordinal() - datetime.date.fromtimestamp(now).toordinal()
 
 
 def qr_png(data: str) -> bytes:
@@ -121,7 +122,7 @@ def page(service: Service, user) -> str:
     else:
         status, status_class = "Активен", "ok"
     if user["expire_at"]:
-        days = happ.days_left(user["expire_at"], now)
+        days = days_left(user["expire_at"], now)
         expire = time.strftime("до %d.%m.%Y", time.localtime(user["expire_at"]))
         expire += " · сегодня" if days == 0 else f" · {days} дн" if days > 0 else ""
     else:
@@ -132,19 +133,15 @@ def page(service: Service, user) -> str:
         limit, bar = f"из {fmt_bytes(user['limit_bytes'])}", f'<div class="bar"><i style="width:{pct}%"></i></div>'
     else:
         limit, bar = "без лимита", ""
-    note = happ.announce(user, service.db.get("announce", "") or "")
-    notice = f'<div class="card notice">{e(note)}</div>' if note else ""
     sub = service.sub_url(user)
     vless_block = VLESS_BLOCK.substitute(
         happ_ios=HAPP_IOS, happ_android=HAPP_ANDROID, happ_apk=HAPP_APK, happ_windows=HAPP_WINDOWS,
         deeplink=e("happ://add/" + sub), sub=e(sub)) if uses(user, "vless") and user["enabled"] else ""
     awg_block = AWG_BLOCK.substitute(awg_ios=AWG_IOS, awg_android=AWG_ANDROID, conf=e(sub + "/awg.conf")) \
         if uses(user, "awg") and user["enabled"] and service.awg_conf(user) else ""
-    support = service.support_url
-    support_block = (f'<a class="btn alt" href="{e(support)}">💬 Написать в поддержку</a>' if support else "")
     return PAGE.substitute(name=e(user["name"]), status=status, status_class=status_class, expire=e(expire),
-                           used=fmt_bytes(used), limit=limit, bar=bar, notice=notice, vless_block=vless_block,
-                           awg_block=awg_block, support_block=support_block)
+                           used=fmt_bytes(used), limit=limit, bar=bar, vless_block=vless_block,
+                           awg_block=awg_block)
 
 
 def make_app(service: Service) -> web.Application:
@@ -163,20 +160,13 @@ def make_app(service: Service) -> web.Application:
             return web.Response(text=page(service, user), content_type="text/html")
 
         headers = {
-            "profile-title": happ.b64(f"VPN {user['name']}"),
+            "profile-title": "base64:" + base64.b64encode(f"VPN {user['name']}".encode()).decode(),
             "profile-update-interval": "12",
             "subscription-userinfo": (f"upload={user['up']}; download={user['down']}; "
                                       f"total={user['limit_bytes'] or 0}; expire={user['expire_at'] or 0}"),
             "profile-web-page-url": sub_url,  # Happ: button that opens the instructions page
             "content-disposition": f'attachment; filename="{user["name"]}"',
         }
-        note = happ.announce(user, service.db.get("announce", "") or "")
-        if note:
-            headers["announce"] = happ.b64(note)
-        if service.support_url:
-            headers["support-url"] = service.support_url
-        if links and service.db.get("routing_ru", "0") == "1":
-            headers["routing"] = happ.routing_link()
         payload = base64.b64encode("\n".join(links).encode()).decode()
         return web.Response(text=payload, headers=headers)
 
