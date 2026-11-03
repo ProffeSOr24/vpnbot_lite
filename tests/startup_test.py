@@ -41,6 +41,11 @@ async def polling(self, *a, **kw):
     async with ClientSession() as s:
         async with s.get(f"http://127.0.0.1:29096/sub/{token}") as r:
             assert r.status == 200, r.status
+        for ua, start in (("Happ/3.2.1", "happ://routing/onadd/"), ("v2RayTun/ios", "eyJ")):
+            async with s.get(f"http://127.0.0.1:29096/sub/{token}", headers={"User-Agent": ua}) as r:
+                assert r.headers.get("routing", "").startswith(start), (ua, r.headers.get("routing"))
+        async with s.get(f"http://127.0.0.1:29096/sub/{token}", headers={"User-Agent": "Hiddify"}) as r:
+            assert "routing" not in r.headers
         async with s.get(f"http://127.0.0.1:29096/sub/{token}", headers={"Accept": "text/html"}) as r:
             assert r.status == 200 and "Добавить в Happ" in await r.text(), r.status
 

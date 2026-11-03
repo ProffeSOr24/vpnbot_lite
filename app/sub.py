@@ -10,6 +10,7 @@ from string import Template
 import qrcode
 from aiohttp import web
 
+from . import routing
 from .service import Service, fmt_bytes, uses
 
 HAPP_IOS = "https://apps.apple.com/us/app/happ-proxy-utility/id6504287215"
@@ -79,6 +80,7 @@ VLESS_BLOCK = Template("""
 <button class="btn alt" onclick="copy('sub',this)">📋 Скопировать ссылку</button>
 <code id="sub">$sub</code>
 <p class="muted">Затем в Happ выберите сервер и нажмите большую кнопку включения.</p>
+$routing_note
 <details><summary>Показать QR-код (для другого устройства)</summary>
 <div class="qr"><img src="$sub?qr=1" alt="QR-код подписки"></div>
 <p class="muted">В Happ: «+» → «Сканировать QR-код».</p></details>
@@ -86,8 +88,8 @@ VLESS_BLOCK = Template("""
 <div class="card faq"><h2>❓ Если не работает</h2>
 <b>Не подключается</b><span class="muted">В Happ потяните список вниз, чтобы обновить подписку, и выберите
 другой сервер: XHTTP вместо Reality или наоборот. На мобильном интернете обычно лучше работает XHTTP.</span>
-<b>Банк или сайт пишет про VPN</b><span class="muted">Некоторые российские сервисы не работают с зарубежного
-IP — на время выключите VPN.</span>
+<b>Банк или сайт пишет про VPN</b><span class="muted">Обновите подписку: правила «РФ напрямую» приходят
+вместе с ней в Happ и v2RayTun. В Hiddify: Настройки → Регион → Россия. Если не помогло — на время выключите VPN.</span>
 <b>Медленно</b><span class="muted">Попробуйте другой сервер из списка и Wi-Fi вместо мобильной сети.</span>
 </div>""")
 
@@ -99,6 +101,11 @@ AWG_BLOCK = Template("""
 <ol start="2"><li><b>Скачайте конфиг</b> и откройте его в AmneziaWG (или в приложении: «+» → «Импорт из файла»):</li></ol>
 <a class="btn" href="$conf">⬇️ Скачать конфиг</a>
 </div>""")
+
+
+ROUTING_NOTE = """<p class="muted">🧭 <b>РФ напрямую</b>: банки, Госуслуги, маркетплейсы и другие российские сайты
+открываются мимо VPN, всё остальное — через VPN. В Happ и v2RayTun это включается само вместе с подпиской,
+в Hiddify — Настройки → Регион → Россия.</p>"""
 
 
 def days_left(ts: float, now: float) -> int:
@@ -134,9 +141,10 @@ def page(service: Service, user) -> str:
     else:
         limit, bar = "без лимита", ""
     sub = service.sub_url(user)
+    routing_on = service.db.get("routing_ru", "1") == "1"
     vless_block = VLESS_BLOCK.substitute(
         happ_ios=HAPP_IOS, happ_android=HAPP_ANDROID, happ_apk=HAPP_APK, happ_windows=HAPP_WINDOWS,
-        deeplink=e("happ://add/" + sub), sub=e(sub)) if uses(user, "vless") and user["enabled"] else ""
+        deeplink=e("happ://add/" + sub), sub=e(sub), routing_note=ROUTING_NOTE if routing_on else "") if uses(user, "vless") and user["enabled"] else ""
     awg_block = AWG_BLOCK.substitute(awg_ios=AWG_IOS, awg_android=AWG_ANDROID, conf=e(sub + "/awg.conf")) \
         if uses(user, "awg") and user["enabled"] and service.awg_conf(user) else ""
     return PAGE.substitute(name=e(user["name"]), status=status, status_class=status_class, expire=e(expire),
@@ -167,6 +175,10 @@ def make_app(service: Service) -> web.Application:
             "profile-web-page-url": sub_url,  # Happ: button that opens the instructions page
             "content-disposition": f'attachment; filename="{user["name"]}"',
         }
+        rules = routing.header(request.headers.get("User-Agent", "")) \
+            if links and service.db.get("routing_ru", "1") == "1" else None
+        if rules:
+            headers["routing"] = rules
         payload = base64.b64encode("\n".join(links).encode()).decode()
         return web.Response(text=payload, headers=headers)
 
