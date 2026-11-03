@@ -689,6 +689,9 @@ def setup(service: Service) -> Router:
         on = lambda key: "вкл" if s.get(key) == "1" else "выкл"  # noqa: E731
         text = (f"<b>Настройки</b>\n\n"
                 f"Адрес сервера: <code>{html.escape(service.host)}</code>\n"
+                f"Названия ключей: <code>{html.escape(service.remark('Reality'))}</code>"
+                + ("" if service.country else " (страну не удалось определить)")
+                + " — страну можно задать в .env: <code>SERVER_COUNTRY=NL</code>\n"
                 f"Порты: Reality {config.XRAY_PORT}/tcp, XHTTP {config.XHTTP_PORT or '—'}/tcp, "
                 f"AmneziaWG {config.AWG_PORT}/udp, подписка {config.SUB_PORT}/tcp\n\n"
                 + (f"<b>VLESS Reality</b>\nМаскировка: свой сайт <code>{html.escape(s['self_sni'])}</code> "

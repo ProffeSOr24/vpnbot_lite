@@ -67,6 +67,8 @@ async def keep_reachable(service: Service, bot: Bot) -> None:
                         if await watch.duckdns_update(session, config.DDNS_DOMAIN, config.DDNS_TOKEN, ip):
                             old = service.db.get("ddns_ip")
                             service.db.set("ddns_ip", ip)
+                            service.db.set("country_ts", "0")  # new IP — maybe another country
+                            await service.detect_country()
                             if old:
                                 await notify(bot, f"🌐 IP сервера сменился: {old} → {ip}\n"
                                                   f"{config.DDNS_DOMAIN} уже указывает на новый адрес — роутер и "
@@ -287,6 +289,7 @@ async def main() -> None:
         await service.detect_host()
     except RuntimeError as e:
         log.warning("%s", e)
+    await service.detect_country()
     psutil.cpu_percent()
 
     error = await service.apply()

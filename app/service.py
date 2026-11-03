@@ -6,6 +6,7 @@ import ipaddress
 import json
 import logging
 import random
+import re
 import secrets
 import socket
 import ssl
@@ -85,6 +86,21 @@ MSK = datetime.timezone(datetime.timedelta(hours=3))  # schedule and day boundar
 
 def msk_day(ts: float) -> str:
     return datetime.datetime.fromtimestamp(ts, MSK).strftime("%Y-%m-%d")
+
+
+COUNTRIES = {"NL": "Нидерланды", "DE": "Германия", "FI": "Финляндия", "SE": "Швеция", "EE": "Эстония",
+             "LV": "Латвия", "LT": "Литва", "PL": "Польша", "FR": "Франция", "GB": "Великобритания",
+             "CH": "Швейцария", "AT": "Австрия", "CZ": "Чехия", "BG": "Болгария", "RO": "Румыния",
+             "MD": "Молдова", "TR": "Турция", "KZ": "Казахстан", "AM": "Армения", "GE": "Грузия",
+             "AE": "ОАЭ", "US": "США", "CA": "Канада", "JP": "Япония", "SG": "Сингапур", "HK": "Гонконг",
+             "IT": "Италия", "ES": "Испания", "PT": "Португалия", "NO": "Норвегия", "DK": "Дания",
+             "IS": "Исландия", "IE": "Ирландия", "BE": "Бельгия", "LU": "Люксембург", "HU": "Венгрия",
+             "RS": "Сербия", "CY": "Кипр", "IL": "Израиль", "RU": "Россия", "BY": "Беларусь", "UA": "Украина"}
+
+
+def flag(code: str) -> str:
+    """🇳🇱 from "NL" (regional indicator letters)."""
+    return "".join(chr(0x1F1E6 + ord(c) - ord("A")) for c in code) if re.fullmatch(r"[A-Z]{2}", code) else ""
 
 
 PROTOS = {"both": "🔗📡 VLESS + AmneziaWG", "vless": "🔗 только VLESS", "awg": "📡 только AmneziaWG"}
@@ -179,6 +195,34 @@ class Service:
                     continue
         raise RuntimeError("Не удалось определить внешний IP, задайте SERVER_HOST в .env")
 
+    async def detect_country(self) -> None:
+        """Country of the server's IP for the flag in key names; checked once a week (SERVER_COUNTRY overrides)."""
+        if config.SERVER_COUNTRY or time.time() - float(self.db.get("country_ts", "0") or 0) < 7 * 86400:
+            return
+        async with aiohttp.ClientSession() as session:
+            for url, field in (("https://ipwho.is/", "country_code"), ("https://api.country.is/", "country"),
+                               ("https://ipinfo.io/json", "country")):
+                try:
+                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=8)) as r:
+                        code = str((await r.json(content_type=None)).get(field) or "").upper()
+                except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, AttributeError):
+                    continue
+                if re.fullmatch(r"[A-Z]{2}", code):
+                    self.db.set("country", code)
+                    self.db.set("country_ts", int(time.time()))
+                    return
+
+    @property
+    def country(self) -> str:
+        return config.SERVER_COUNTRY or self.db.get("country") or ""
+
+    def remark(self, kind: str) -> str:
+        """Key name in the apps: «🇳🇱 Нидерланды Reality» — Happ shows the flag as the server icon."""
+        code = self.country
+        if not code:
+            return kind
+        return f"{flag(code)} {COUNTRIES.get(code, code)} {kind}"
+
     @property
     def host(self) -> str:
         return config.SERVER_HOST or self.db.get("host") or "127.0.0.1"
@@ -255,14 +299,14 @@ class Service:
         s = self.settings()
         params = {"type": "tcp", "flow": "xtls-rprx-vision", **self._reality_params(s)}
         return (f"vless://{user['uuid']}@{self._reality_host()}:{config.XRAY_PORT}"
-                f"?{urlencode(params)}#{quote(user['name'] + ' Reality')}")
+                f"?{urlencode(params)}#{quote(self.remark('Reality'))}")
 
     def xhttp_link(self, user) -> str:
         s = self.settings()
         params = {"type": "xhttp", "path": s["xhttp_path"], "mode": "packet-up",
                   "extra": json.dumps(XHTTP_CLIENT, separators=(",", ":")), **self._reality_params(s)}
         return (f"vless://{user['uuid']}@{self._reality_host()}:{config.XHTTP_PORT}"
-                f"?{urlencode(params)}#{quote(user['name'] + ' XHTTP')}")
+                f"?{urlencode(params)}#{quote(self.remark('XHTTP'))}")
 
     def links(self, user) -> list[str]:
         if not uses(user, "vless"):

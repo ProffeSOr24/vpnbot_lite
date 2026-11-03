@@ -15,6 +15,8 @@ BIN_DIR = DATA_DIR / "bin"          # binaries installed by the bot (updates)
 BUILTIN_BIN_DIR = Path(os.environ.get("BUILTIN_BIN_DIR", "/opt/bin"))  # baked into the image
 
 SERVER_HOST = os.environ.get("SERVER_HOST", "").strip()
+# country of the server for the flag in key names (two letters, e.g. NL); empty — detected by IP
+SERVER_COUNTRY = os.environ.get("SERVER_COUNTRY", "").strip().upper()
 XRAY_PORT = _int("XRAY_PORT", 443)
 XHTTP_PORT = _int("XHTTP_PORT", 8443)  # VLESS XHTTP + Reality; 0 disables
 SUB_PORT = _int("SUB_PORT", 2096)
