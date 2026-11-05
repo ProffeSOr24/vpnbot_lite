@@ -8,6 +8,11 @@ import aiohttp
 log = logging.getLogger(__name__)
 
 CHECK_HOST = "https://check-host.net"
+GLOBALPING = "https://api.globalping.io/v1"
+GLOBALPING_PROBES = 10  # home providers in Russia per check (free API: 250 probe results an hour)
+PROVIDERS = {"mts": "МТС", "vimpelcom": "Билайн", "pvimpelcom": "Билайн", "beeline": "Билайн",
+             "rostelecom": "Ростелеком", "er-telecom": "Дом.ру", "moscow city telephone network": "МГТС",
+             "megafon": "МегаФон", "tele2": "Tele2", "t2 mobile": "T2", "ttk": "ТТК"}
 ABROAD = ("de", "nl", "fi", "fr", "pl")  # control nodes: if these fail too, the server itself is down
 HEADERS = {"Accept": "application/json"}
 
@@ -36,7 +41,8 @@ async def duckdns_update(session: aiohttp.ClientSession, domain: str, token: str
 
 
 class Reachability:
-    """Ping and TCP to the server from check-host.net nodes in Russia (plus a few abroad as a control)."""
+    """Is the server reachable from Russia: check-host.net (2 datacenter nodes + a foreign control) and Globalping
+    (home internet providers). Both run in parallel."""
 
     def __init__(self) -> None:
         self._nodes: tuple[float, dict] = (0.0, {})
@@ -53,28 +59,23 @@ class Reachability:
             self._nodes = (time.time(), nodes)
         return nodes
 
-    async def check(self, session: aiohttp.ClientSession, host: str, port: int) -> dict:
-        """{'state': ok|partial|blocked|down|error, 'ru': [(asn, ping_ok, tcp_ok)], 'abroad': n_ok/n}."""
-        try:
-            nodes = await self.nodes(session)
-            ru = [n for n, info in nodes.items() if info.get("location", [""])[0] == "ru"]
-            abroad = [n for n, info in nodes.items() if info.get("location", [""])[0] in ABROAD][:4]
-            if not ru:
-                return {"state": "error", "error": "у check-host.net сейчас нет узлов в России"}
-            picked = [("node", n) for n in ru + abroad]
-            ids = {}
-            for kind, target in (("ping", host), ("tcp", f"{host}:{port}")):
-                async with session.get(f"{CHECK_HOST}/check-{kind}", params=[("host", target), *picked],
-                                       headers=HEADERS, timeout=aiohttp.ClientTimeout(total=20)) as r:
-                    ids[kind] = (await r.json(content_type=None))["request_id"]
-            results = {}
-            for _ in range(30):  # nodes usually report within 5–20 s, but check-host can take over a minute
-                await asyncio.sleep(3)
-                results = {k: await self._get(session, f"/check-result/{rid}") for k, rid in ids.items()}
-                if all(v is not None for res in results.values() for v in res.values()):
-                    break
-        except (aiohttp.ClientError, asyncio.TimeoutError, KeyError, ValueError) as e:
-            return {"state": "error", "error": f"check-host.net недоступен: {e}"}
+    async def _check_host(self, session: aiohttp.ClientSession, host: str, port: int) -> tuple[list, list]:
+        """check-host.net: Russian nodes (ping + TCP) and up to 4 foreign ones as the control."""
+        nodes = await self.nodes(session)
+        ru = [n for n, info in nodes.items() if info.get("location", [""])[0] == "ru"]
+        abroad = [n for n, info in nodes.items() if info.get("location", [""])[0] in ABROAD][:4]
+        picked = [("node", n) for n in ru + abroad]
+        ids = {}
+        for kind, target in (("ping", host), ("tcp", f"{host}:{port}")):
+            async with session.get(f"{CHECK_HOST}/check-{kind}", params=[("host", target), *picked],
+                                   headers=HEADERS, timeout=aiohttp.ClientTimeout(total=20)) as r:
+                ids[kind] = (await r.json(content_type=None))["request_id"]
+        results = {}
+        for _ in range(30):  # nodes usually report within 5–20 s, but check-host can take over a minute
+            await asyncio.sleep(3)
+            results = {k: await self._get(session, f"/check-result/{rid}") for k, rid in ids.items()}
+            if all(v is not None for res in results.values() for v in res.values()):
+                break
 
         def ok(kind: str, node: str) -> bool | None:
             """True/False, or None when the node has not answered (check-host is slow or the node is busy)."""
@@ -87,27 +88,67 @@ class Reachability:
                 return any(x and x[0] == "OK" for x in res[0])
             return isinstance(res[0], dict) and "time" in res[0]
 
-        ru_rows = [(nodes[n].get("asn", "?"), nodes[n].get("location", ["", "", "?"])[2], ok("ping", n), ok("tcp", n))
-                   for n in ru]
-        abroad_res = [r for r in (ok("tcp", n) for n in abroad) if r is not None]
+        rows = [(nodes[n].get("asn", "?"), nodes[n].get("location", ["", "", "?"])[2], ok("ping", n), ok("tcp", n))
+                for n in ru]
+        return rows, [r for r in (ok("tcp", n) for n in abroad) if r is not None]
+
+    async def _globalping(self, session: aiohttp.ClientSession, host: str, port: int) -> list:
+        """Globalping: TCP connects from home internet providers in Russia (MTS, Beeline, Rostelecom, Dom.ru…) —
+        where the users are, unlike check-host's two datacenter nodes. Rows have no ping ("-")."""
+        body = {"type": "ping", "target": host, "locations": [{"magic": "RU+eyeball-network", "limit": GLOBALPING_PROBES}],
+                "measurementOptions": {"packets": 2, "protocol": "TCP", "port": port}}
+        async with session.post(f"{GLOBALPING}/measurements", json=body, headers=HEADERS,
+                                timeout=aiohttp.ClientTimeout(total=20)) as r:
+            mid = (await r.json(content_type=None))["id"]
+        data = {}
+        for _ in range(15):
+            await asyncio.sleep(3)
+            async with session.get(f"{GLOBALPING}/measurements/{mid}", headers=HEADERS,
+                                   timeout=aiohttp.ClientTimeout(total=20)) as r:
+                data = await r.json(content_type=None)
+            if data.get("status") != "in-progress":
+                break
+        rows = []
+        for item in data.get("results", []):
+            probe, res = item.get("probe", {}), item.get("result", {})
+            loss = (res.get("stats") or {}).get("loss")
+            ok = None if res.get("status") != "finished" or loss is None else loss < 100
+            rows.append((provider_name(probe.get("network", "?")), probe.get("city", "?"), "-", ok))
+        return rows
+
+    async def check(self, session: aiohttp.ClientSession, host: str, port: int) -> dict:
+        """{'state': ok|partial|blocked|down|error, 'ru': [(provider, city, ping_ok|'-', tcp_ok)], 'abroad': n_ok/n}.
+        Both sources run in parallel; either may fail alone."""
+        ch, gp = await asyncio.gather(self._check_host(session, host, port), self._globalping(session, host, port),
+                                      return_exceptions=True)
+        errors = []
+        if isinstance(ch, BaseException):
+            errors.append(f"check-host.net: {ch or type(ch).__name__}")
+            ch = ([], [])
+        if isinstance(gp, BaseException):
+            errors.append(f"Globalping: {gp or type(gp).__name__}")
+            gp = []
+        ru_rows, abroad_res = ch[0] + gp, ch[1]
         abroad_ok = sum(abroad_res)
         ru_known = [t for _, _, _, t in ru_rows if t is not None]
-        ru_ok = sum(ru_known)
+        ru_ok, failed = sum(ru_known), len(ru_known) - sum(ru_known)
+        now = int(time.time())
         if not ru_known:
-            return {"state": "error", "error": "узлы check-host.net не ответили вовремя", "ru": ru_rows,
-                    "time": int(time.time())}
+            return {"state": "error", "error": "; ".join(errors) or "проверочные узлы не ответили вовремя",
+                    "ru": ru_rows, "time": now}
         if abroad_res and not abroad_ok and not ru_ok:
             state = "down"
-        elif ru_ok == len(ru_known):
+        elif failed == 0 or (len(ru_known) >= 5 and failed == 1):  # one flaky probe out of many is noise
             state = "ok"
         elif ru_ok:
             state = "partial"
-        elif abroad_ok:
-            state = "blocked"
-        else:  # no control result from abroad — can't tell a block from an outage
+        elif abroad_ok or not abroad_res:
+            state = "blocked"  # Russia fails everywhere; no control is fine when Globalping alone saw it
+        else:
             return {"state": "error", "error": "узлы за рубежом не ответили — нечем сравнить", "ru": ru_rows,
-                    "time": int(time.time())}
-        return {"state": state, "ru": ru_rows, "abroad": f"{abroad_ok}/{len(abroad_res)}" if abroad_res else "", "time": int(time.time())}
+                    "time": now}
+        return {"state": state, "ru": ru_rows, "ru_summary": f"{ru_ok}/{len(ru_known)}",
+                "abroad": f"{abroad_ok}/{len(abroad_res)}" if abroad_res else "", "time": now}
 
 
 STATE_TEXT = {
@@ -123,12 +164,24 @@ def _mark(value: bool | None) -> str:
     return "❔" if value is None else "✅" if value else "❌"
 
 
+def provider_name(network: str) -> str:
+    """Russian name for the well-known providers: «PVimpelCom» → «Билайн»."""
+    low = network.lower()
+    for key, name in PROVIDERS.items():
+        if key in low:
+            return name
+    return network[:30]
+
+
 def describe(result: dict, host: str, port: int) -> str:
     lines = [f"<b>Доступность {host}</b>: {STATE_TEXT.get(result['state'], result['state'])}"]
     if result.get("error"):
         lines.append(result["error"])
-    for asn, city, ping_ok, tcp_ok in result.get("ru", []):
-        lines.append(f"{city} {asn}: ping {_mark(ping_ok)}, порт {port} {_mark(tcp_ok)}")
+    if result.get("ru_summary"):
+        lines.append(f"Из России: подключение проходит в {result['ru_summary']} проверок")
+    for name, city, ping_ok, tcp_ok in result.get("ru", []):
+        ping = "" if ping_ok == "-" else f"ping {_mark(ping_ok)}, "
+        lines.append(f"{_mark(tcp_ok)} {city}, {name}: {ping}порт {port}")
     if result.get("abroad"):
         lines.append(f"Из-за рубежа (контроль): {result['abroad']} узлов отвечают")
     return "\n".join(lines)
