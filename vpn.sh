@@ -345,8 +345,8 @@ cmd_doctor() {
         echo "бот $(cat VERSION), git $(git log -1 --format='%h %cd' --date=short 2>/dev/null)"
         section "Контейнеры"
         docker compose ps --format '{{.Name}}: {{.Status}}' 2>&1
-        section "Настройки (.env без токена и ID)"
-        grep -vE '^(BOT_TOKEN|ADMIN_IDS)=' .env
+        section "Настройки (.env без токенов и ID)"
+        grep -vE '^(BOT_TOKEN|ADMIN_IDS|DDNS_TOKEN)=' .env
         section "Порты"
         ss -ltnupH 2>/dev/null | grep -E "xray|amneziawg|caddy|python" | awk '{print $1, $5, $7}'
         section "Ядра"
