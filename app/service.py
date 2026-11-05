@@ -167,6 +167,7 @@ class Service:
     def settings(self) -> dict:
         s = {r["key"]: r["value"] for r in self.db.conn.execute("SELECT key, value FROM settings")}
         s["self_sni"] = self.self_sni
+        s["reality_tcp_active"] = self.reality_tcp_active(s)
         return s
 
     @property
@@ -310,11 +311,22 @@ class Service:
         return (f"vless://{user['uuid']}@{self._reality_host()}:{config.XHTTP_PORT}"
                 f"?{urlencode(params)}#{quote(self.remark('XHTTP'))}")
 
+    @staticmethod
+    def xhttp_active(s: dict) -> bool:
+        return bool(config.XHTTP_PORT) and s.get("xhttp_enabled") == "1"
+
+    def reality_tcp_active(self, s: dict) -> bool:
+        """VLESS Reality over plain TCP (port 443) for clients: off by default since 1.32 — XHTTP survives DPI
+        better. Forced on when XHTTP is off, so clients always have something. With it off, port 443 still answers
+        as the decoy site; it just accepts no clients."""
+        return s.get("reality_tcp") == "1" or not self.xhttp_active(s)
+
     def links(self, user) -> list[str]:
         if not uses(user, "vless"):
             return []
-        links = [self.vless_link(user)]
-        if config.XHTTP_PORT and self.db.get("xhttp_enabled") == "1":
+        s = self.settings()
+        links = [self.vless_link(user)] if s["reality_tcp_active"] else []
+        if self.xhttp_active(s):
             links.append(self.xhttp_link(user))
         return links
 

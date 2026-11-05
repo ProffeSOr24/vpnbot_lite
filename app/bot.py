@@ -246,7 +246,7 @@ def setup(service: Service) -> Router:
         text = (f"<b>{html.escape(u['name'])}</b>\n\n"
                 f"📲 <b>Подписка</b> (рекомендуется — ключи обновляются сами):\n<code>{html.escape(sub)}</code>\n\n"
                 + "\n\n".join(f"<code>{html.escape(link)}</code>" for link in service.links(u))
-                + "\n\nПриложения: Hiddify, v2RayTun, Happ (iOS/Android), v2rayN (Windows), Streisand (iOS).")
+                + "\n\nПриложения: Happ, v2RayTun (iOS/Android), v2rayN (Windows) — они поддерживают XHTTP.")
         await cb.message.answer_photo(BufferedInputFile(qr_png(sub), "qr.png"), caption="QR-код подписки")
         await cb.message.answer(text, disable_web_page_preview=True)
         await cb.answer()
@@ -689,7 +689,7 @@ def setup(service: Service) -> Router:
         on = lambda key: "вкл" if s.get(key) == "1" else "выкл"  # noqa: E731
         text = (f"<b>Настройки</b>\n\n"
                 f"Адрес сервера: <code>{html.escape(service.host)}</code>\n"
-                f"Названия ключей: <code>{html.escape(service.remark('Reality'))}</code>"
+                f"Названия ключей: <code>{html.escape(service.remark('XHTTP'))}</code>"
                 + ("" if service.country else " (страну не удалось определить)")
                 + " — страну можно задать в .env: <code>SERVER_COUNTRY=NL</code>\n"
                 f"Порты: Reality {config.XRAY_PORT}/tcp, XHTTP {config.XHTTP_PORT or '—'}/tcp, "
@@ -700,6 +700,9 @@ def setup(service: Service) -> Router:
                    f"<b>VLESS Reality</b>\nSNI (маскировка): <code>{html.escape(s['reality_sni'])}</code>, "
                    f"передавать SNI в ссылках: {'нет' if s.get('reality_nosni') == '1' else 'да'}\n") +
                 f"XHTTP: {on('xhttp_enabled') if config.XHTTP_PORT else 'выкл (XHTTP_PORT=0)'}\n"
+                f"Reality по TCP для клиентов: {'вкл' if s['reality_tcp_active'] else 'выкл (только XHTTP)'}"
+                + (" — включён сам, потому что XHTTP выключен" if s['reality_tcp_active'] and s.get('reality_tcp') != '1' else "")
+                + "\n"
                 f"Public key: <code>{s['reality_public']}</code>\nShort ID: <code>{s['reality_sid']}</code>\n\n"
                 f"<b>AmneziaWG</b>: {on('awg_enabled')}, подсеть {config.AWG_SUBNET}, порт {config.AWG_PORT}\n"
                 f"Маскировка новых конфигов: "
@@ -708,7 +711,8 @@ def setup(service: Service) -> Router:
         markup = kb([("🌐 SNI Reality", "set:sni"), ("🩺 Проверить SNI", "set:check")],
                     [(f"SNI в ссылках: {'нет' if s.get('reality_nosni') == '1' else 'да'}", "set:nosni"),
                      (f"XHTTP: {on('xhttp_enabled')}", "set:xhttp")],
-                    [("🔑 Новые ключи Reality", "set:rekey")],
+                    [(f"Reality (TCP, порт {config.XRAY_PORT}): {'вкл' if s['reality_tcp_active'] else 'выкл'}",
+                      "set:rtcp"), ("🔑 Новые ключи Reality", "set:rekey")],
                     [(f"AmneziaWG: {on('awg_enabled')}", "set:awg"), ("🔑 Новые ключи AWG", "set:awgkey")],
                     [("Маскировка новых AWG-конфигов: "
                       + ("QUIC" if s.get("awg_client_profile", "quic") == "quic" else "как у сервера"), "set:awgprof")],
@@ -720,6 +724,17 @@ def setup(service: Service) -> Router:
     async def settings(cb: CallbackQuery, state: FSMContext) -> None:
         await state.clear()
         await show(cb, *settings_view())
+
+    @router.callback_query(F.data == "set:rtcp")
+    async def toggle_reality_tcp(cb: CallbackQuery) -> None:
+        on = db.get("reality_tcp", "0") != "1"
+        db.set("reality_tcp", "1" if on else "0")
+        await apply(cb)
+        await show(cb, *settings_view())
+        await cb.message.answer(
+            "ℹ️ Reality по TCP снова в подписке. Клиентам достаточно обновить подписку." if on else
+            "ℹ️ Reality по TCP выключен: в подписке остался только XHTTP. У кого подписка, ключ Reality пропадёт "
+            "при её обновлении. Порт 443 продолжает показывать сайт-приманку.")
 
     @router.callback_query(F.data.in_({"set:ads", "set:awg", "set:nosni", "set:xhttp"}))
     async def toggle_setting(cb: CallbackQuery) -> None:

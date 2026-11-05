@@ -322,7 +322,8 @@ class Xray(Core):
                 "listen": "0.0.0.0",
                 "port": config.XRAY_PORT,
                 "protocol": "vless",
-                "settings": {"clients": clients, "decryption": "none"},
+                # no clients when Reality-TCP is off: the port still answers as the decoy site to everyone
+                "settings": {"clients": clients if s.get("reality_tcp_active", True) else [], "decryption": "none"},
                 "streamSettings": {"network": "tcp", "security": "reality", "realitySettings": reality},
                 "sniffing": sniffing,
             }],
