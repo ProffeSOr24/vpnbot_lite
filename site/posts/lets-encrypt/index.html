@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Сертификаты Let&#x27;s Encrypt без ручной работы — Заметки о Linux</title>
+<meta name="description" content="Сертификат Let&#x27;s Encrypt живёт 90 дней, поэтому продлевать его руками — плохая идея. Современные веб-серверы делают это сами: получают сертификат при ">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header><a class="brand" href="../../">Заметки о Linux</a></header>
+<main>
+<article><h1>Сертификаты Let&#x27;s Encrypt без ручной работы</h1><time datetime="2026-04-18">18 апреля 2026</time>
+<p>Сертификат Let's Encrypt живёт 90 дней, поэтому продлевать его руками — плохая идея. Современные веб-серверы
+делают это сами: получают сертификат при первом запуске и обновляют за месяц до окончания.</p>
+<h2>Что нужно</h2>
+<ul>
+<li>Доменное имя, которое указывает на сервер.</li>
+<li>Открытый 80-й порт — по нему проходит проверка владения доменом.</li>
+<li>Веб-сервер с автоматическим HTTPS или certbot с таймером.</li>
+</ul>
+<pre><code>openssl s_client -connect example.org:443 -servername example.org &lt;/dev/null 2&gt;/dev/null \
+  | openssl x509 -noout -dates</code></pre>
+<p>Команда выше показывает, до какого числа действует текущий сертификат.</p>
+</article><p class="back"><a href="/">← Все заметки</a></p>
+</main>
+<footer>© 2025–2026</footer>
+</body>
+</html>

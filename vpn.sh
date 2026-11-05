@@ -455,6 +455,8 @@ cmd_update() {
     [ -n "$(env_get VPNBOT_IMAGE)" ] || env_set VPNBOT_IMAGE "$(image_ref)"
     get_image
     docker compose up -d
+    # Caddy reads the Caddyfile (and the decoy site's 404 rules) only at start: apply a changed one now
+    docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 || true
     docker image prune -f >/dev/null || true
     if [ -n "$old_head" ] && [ "$(cat VERSION)" != "$old_ver" ]; then
         echo "$old_head $old_ver" > data/rollback.info   # what ./vpn.sh rollback returns to

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Мониторинг для одного сервера — Заметки о Linux</title>
+<meta name="description" content="Для одной машины не нужен целый стек наблюдаемости. Хватает трёх вещей: следить за диском, памятью и тем, что нужные сервисы живы.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header><a class="brand" href="../../">Заметки о Linux</a></header>
+<main>
+<article><h1>Мониторинг для одного сервера</h1><time datetime="2026-09-21">21 сентября 2026</time>
+<p>Для одной машины не нужен целый стек наблюдаемости. Хватает трёх вещей: следить за диском, памятью и тем, что
+нужные сервисы живы.</p>
+<h2>Минимальный набор</h2>
+<ul>
+<li><b>Диск</b> — предупреждение при заполнении на 80%, автоочистка старых логов и образов Docker.</li>
+<li><b>Память</b> — swap на 1–2 ГБ спасает от внезапного OOM на маленьких VPS.</li>
+<li><b>Сервисы</b> — <code>systemctl is-active</code> по расписанию и сообщение в мессенджер, если что-то упало.</li>
+</ul>
+<pre><code>df -h /           # сколько места
+free -h           # память и swap
+journalctl -p err -b   # ошибки с последней загрузки</code></pre>
+<p>Главное — чтобы оповещения были редкими и по делу. Алерт, который приходит каждый час, через неделю перестают
+читать.</p>
+</article><p class="back"><a href="/">← Все заметки</a></p>
+</main>
+<footer>© 2025–2026</footer>
+</body>
+</html>

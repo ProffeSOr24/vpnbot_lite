@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Пять команд для диагностики сети — Заметки о Linux</title>
+<meta name="description" content="Когда «ничего не работает», почти всегда хватает пяти команд, чтобы понять, на каком уровне проблема.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header><a class="brand" href="../../">Заметки о Linux</a></header>
+<main>
+<article><h1>Пять команд для диагностики сети</h1><time datetime="2026-02-09">9 февраля 2026</time>
+<p>Когда «ничего не работает», почти всегда хватает пяти команд, чтобы понять, на каком уровне проблема.</p>
+<pre><code>ip a                 # какие адреса у интерфейсов
+ip route             # куда уходят пакеты по умолчанию
+ss -tulpn            # какие программы слушают какие порты
+dig example.org      # работает ли DNS
+curl -v https://example.org   # TLS и ответ сервера</code></pre>
+<p>Идти лучше снизу вверх: есть ли адрес, есть ли маршрут, отвечает ли DNS, открывается ли порт, что отвечает
+приложение. Так проблема находится за минуты, а не за вечер.</p>
+<p>Если команды <code>dig</code> нет, она ставится пакетом <code>dnsutils</code>.</p>
+</article><p class="back"><a href="/">← Все заметки</a></p>
+</main>
+<footer>© 2025–2026</footer>
+</body>
+</html>

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DNS для домашнего сервера — Заметки о Linux</title>
+<meta name="description" content="У домашнего провайдера IP-адрес часто меняется. Чтобы не перенастраивать устройства каждый раз, удобно завести динамический DNS: имя, которое само сле">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header><a class="brand" href="../../">Заметки о Linux</a></header>
+<main>
+<article><h1>DNS для домашнего сервера</h1><time datetime="2026-06-02">2 июня 2026</time>
+<p>У домашнего провайдера IP-адрес часто меняется. Чтобы не перенастраивать устройства каждый раз, удобно завести
+динамический DNS: имя, которое само следует за адресом.</p>
+<h2>Как это работает</h2>
+<p>Сервер раз в несколько минут узнаёт свой внешний адрес и, если он изменился, обновляет запись у DNS-провайдера.
+Клиенты ходят по имени и ничего не замечают.</p>
+<pre><code>curl -4 https://api.ipify.org          # внешний адрес
+dig +short myhome.example.org          # что сейчас в DNS</code></pre>
+<p>Полезно помнить про TTL: пока он не истёк, клиенты могут ходить на старый адрес. Для динамических записей
+разумно ставить 60–300 секунд.</p>
+</article><p class="back"><a href="/">← Все заметки</a></p>
+</main>
+<footer>© 2025–2026</footer>
+</body>
+</html>

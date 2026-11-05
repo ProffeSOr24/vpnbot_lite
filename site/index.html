@@ -3,38 +3,22 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Заметки</title>
-<style>
-  body { margin: 0; font: 17px/1.6 -apple-system, "Segoe UI", Roboto, sans-serif; color: #222; background: #fafafa; }
-  main { max-width: 680px; margin: 0 auto; padding: 48px 20px; }
-  h1 { font-size: 28px; margin: 0 0 4px; }
-  .sub { color: #777; margin: 0 0 40px; }
-  article { margin: 0 0 32px; }
-  h2 { font-size: 20px; margin: 0 0 4px; }
-  time { color: #999; font-size: 14px; }
-  footer { color: #aaa; font-size: 14px; margin-top: 56px; }
-</style>
+<title>Заметки о Linux</title>
+<meta name="description" content="Домашний сервер, сети и автоматизация — коротко и по делу.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
 </head>
 <body>
+<header><a class="brand" href="./">Заметки о Linux</a></header>
 <main>
-  <h1>Заметки</h1>
-  <p class="sub">Домашний сервер, Linux и всё, что не хочется забыть.</p>
-  <article>
-    <h2>Бэкапы, которые действительно восстанавливаются</h2>
-    <time>октябрь</time>
-    <p>Копия, которую ни разу не пробовали развернуть, — это надежда, а не бэкап. Раз в месяц поднимаю чистую виртуалку и восстанавливаю всё из архива по шагам из README.</p>
-  </article>
-  <article>
-    <h2>Мониторинг для одного сервера</h2>
-    <time>сентябрь</time>
-    <p>Для одной машины хватает node_exporter, Prometheus и пары алертов в Telegram: диск, память, сертификаты. Grafana — по желанию.</p>
-  </article>
-  <article>
-    <h2>Docker Compose: перечитать .env</h2>
-    <time>август</time>
-    <p><code>docker compose restart</code> не применяет изменения в <code>.env</code> — нужен <code>docker compose up -d --force-recreate</code>.</p>
-  </article>
-  <footer>© заметки для себя</footer>
+<h1>Заметки о Linux</h1><p class="sub">Домашний сервер, сети и автоматизация — коротко и по делу.</p><ul class="posts"><li><a href="/posts/backups-that-restore/">Бэкапы, которые действительно восстанавливаются</a><time datetime="2026-10-12">12 октября 2026</time><p>Копия, которую ни разу не пробовали развернуть, — это надежда, а не бэкап. Раз в месяц я поднимаю чистую виртуальную машину и восстанавливаю всё по шагам из README. Если где-то при…</p></li>
+<li><a href="/posts/monitoring-one-server/">Мониторинг для одного сервера</a><time datetime="2026-09-21">21 сентября 2026</time><p>Для одной машины не нужен целый стек наблюдаемости. Хватает трёх вещей: следить за диском, памятью и тем, что нужные сервисы живы.</p></li>
+<li><a href="/posts/ssh-keys-only/">SSH только по ключам</a><time datetime="2026-08-30">30 августа 2026</time><p>Первое, что стоит сделать на свежем сервере, — отключить вход под root и по паролю. В логах любого сервера с открытым 22-м портом через час появятся тысячи попыток подбора.</p></li>
+<li><a href="/posts/docker-compose-small/">Docker Compose на маленьком VPS</a><time datetime="2026-07-14">14 июля 2026</time><p>На сервере с 1 ГБ памяти Compose удобнее, чем установка всего прямо в систему: каждый сервис изолирован, а обновление — это docker compose pull &amp;&amp; docker compose up -d.</p></li>
+<li><a href="/posts/dns-basics/">DNS для домашнего сервера</a><time datetime="2026-06-02">2 июня 2026</time><p>У домашнего провайдера IP-адрес часто меняется. Чтобы не перенастраивать устройства каждый раз, удобно завести динамический DNS: имя, которое само следует за адресом.</p></li>
+<li><a href="/posts/lets-encrypt/">Сертификаты Let&#x27;s Encrypt без ручной работы</a><time datetime="2026-04-18">18 апреля 2026</time><p>Сертификат Let&#x27;s Encrypt живёт 90 дней, поэтому продлевать его руками — плохая идея. Современные веб-серверы делают это сами: получают сертификат при первом запуске и обновляют за …</p></li>
+<li><a href="/posts/linux-network-commands/">Пять команд для диагностики сети</a><time datetime="2026-02-09">9 февраля 2026</time><p>Когда «ничего не работает», почти всегда хватает пяти команд, чтобы понять, на каком уровне проблема.</p></li></ul>
 </main>
+<footer>© 2025–2026</footer>
 </body>
 </html>

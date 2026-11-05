@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SSH только по ключам — Заметки о Linux</title>
+<meta name="description" content="Первое, что стоит сделать на свежем сервере, — отключить вход под root и по паролю. В логах любого сервера с открытым 22-м портом через час появятся т">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header><a class="brand" href="../../">Заметки о Linux</a></header>
+<main>
+<article><h1>SSH только по ключам</h1><time datetime="2026-08-30">30 августа 2026</time>
+<p>Первое, что стоит сделать на свежем сервере, — отключить вход под root и по паролю. В логах любого сервера с
+открытым 22-м портом через час появятся тысячи попыток подбора.</p>
+<h2>По шагам</h2>
+<ol>
+<li>Создать пользователя и дать ему sudo: <code>adduser admin &amp;&amp; usermod -aG sudo admin</code>.</li>
+<li>Положить свой публичный ключ в <code>~admin/.ssh/authorized_keys</code>.</li>
+<li><b>Проверить вход по ключу в новом окне</b>, не закрывая текущее.</li>
+<li>Только после этого выключить пароли.</li>
+</ol>
+<pre><code># /etc/ssh/sshd_config.d/00-hardening.conf
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no</code></pre>
+<pre><code>sshd -t &amp;&amp; systemctl restart ssh</code></pre>
+<p><code>sshd -t</code> проверяет конфигурацию до перезапуска — с опечаткой в файле сервис просто не стартует, и
+доступ пропадёт.</p>
+</article><p class="back"><a href="/">← Все заметки</a></p>
+</main>
+<footer>© 2025–2026</footer>
+</body>
+</html>

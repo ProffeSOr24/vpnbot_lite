@@ -5,11 +5,42 @@
 	default_sni {$SUB_DOMAIN}  # a visit by IP or with any other name still gets our site and certificate
 }
 
+# The notes site (static files in ./site), and its own 404 page instead of an empty error.
+(notes) {
+	root * /srv/site
+	file_server
+}
+(not_found) {
+	handle_errors 404 {
+		root * /srv/site
+		rewrite * /404.html
+		file_server {
+			status 404
+		}
+	}
+}
+
 # HTTPS for subscriptions (Happ and other apps refuse plain http).
 # SUB_DOMAIN is the server's name: <ip-with-dashes>.nip.io (free, follows the IP) or your DuckDNS name.
 # Let's Encrypt validates it over port 80, the certificate is renewed automatically.
+# Only /sub/… goes to the bot; anything else on this port is the same notes site, not a bare backend error.
 {$SUB_DOMAIN}:{$SUB_HTTPS_PORT:2443} {
-	reverse_proxy 127.0.0.1:{$SUB_PORT:2096}
+	handle /sub/* {
+		reverse_proxy 127.0.0.1:{$SUB_PORT:2096} {
+			@missing status 404
+			handle_response @missing {  # a wrong link gets the site's 404 page, not the backend's
+				root * /srv/site
+				rewrite * /404.html
+				file_server {
+					status 404
+				}
+			}
+		}
+	}
+	handle {
+		import notes
+	}
+	import not_found
 }
 
 # The site REALITY shows to everyone who isn't a client (DPI probes, browsers) when SELF_SNI=1:
@@ -17,6 +48,6 @@
 # The second address catches visits by IP: they get the same site (certificate via default_sni).
 {$SUB_DOMAIN}:{$DECOY_PORT:9443}, https://:{$DECOY_PORT:9443} {
 	bind 127.0.0.1
-	root * /srv/site
-	file_server
+	import notes
+	import not_found
 }

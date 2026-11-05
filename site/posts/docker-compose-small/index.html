@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Docker Compose на маленьком VPS — Заметки о Linux</title>
+<meta name="description" content="На сервере с 1 ГБ памяти Compose удобнее, чем установка всего прямо в систему: каждый сервис изолирован, а обновление — это docker compose pull &amp;&amp; doc">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header><a class="brand" href="../../">Заметки о Linux</a></header>
+<main>
+<article><h1>Docker Compose на маленьком VPS</h1><time datetime="2026-07-14">14 июля 2026</time>
+<p>На сервере с 1 ГБ памяти Compose удобнее, чем установка всего прямо в систему: каждый сервис изолирован, а
+обновление — это <code>docker compose pull &amp;&amp; docker compose up -d</code>.</p>
+<h2>Что настроить сразу</h2>
+<ul>
+<li><b>Ротация логов.</b> Без неё json-логи контейнеров рано или поздно съедят диск.</li>
+<li><b>Перезапуск.</b> <code>restart: unless-stopped</code> поднимет сервис после перезагрузки.</li>
+<li><b>Данные — в volume.</b> Всё, что не в volume, исчезнет при пересоздании контейнера.</li>
+</ul>
+<pre><code>services:
+  app:
+    image: example/app:1.4
+    restart: unless-stopped
+    volumes:
+      - ./data:/data
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }</code></pre>
+<p>И не забывайте чистить старые образы: <code>docker image prune -f</code>.</p>
+</article><p class="back"><a href="/">← Все заметки</a></p>
+</main>
+<footer>© 2025–2026</footer>
+</body>
+</html>
