@@ -224,17 +224,16 @@ class Reachability:
             coro.close()
             return nothing()
 
-        # 1. failed nodes: can they reach anything? 2. the name (SNI) from every probe. 4. the exit IP from Russia
-        exit_on = bool(exit_ip and entry_ip and exit_ip != entry_ip)
+        # 1. failed nodes: can they reach anything? 2. the name (SNI) from every probe. The exit IP is never probed:
+        # the same probe touching the entry and the exit would tie the two addresses together
         step = await asyncio.gather(
             maybe(ch_failed, self._ch_tcp(session, [f"{c}:443" for c in CONTROL], ch_failed)),
             maybe(mid and gp_failed, self._gp_tcp(session, mid, gp_failed, CONTROL[0], 443)),
             maybe(mid and gp_failed, self._gp_tcp(session, mid, gp_failed, CONTROL[1], 443)),
             maybe(mid and sni, self._gp_tls(session, mid, gp_rows, host, port)),
-            maybe(mid and exit_on, self._gp_tcp(session, mid, gp_rows, exit_ip, port)),
             return_exceptions=True)
         step = [{} if isinstance(x, BaseException) else x for x in step]
-        ch_ctl, gp_ya, gp_google, tls, exit_res = step
+        ch_ctl, gp_ya, gp_google, tls = step
         for r in rows:
             r["note"] = None
             if r["tcp"] is False:
@@ -263,9 +262,6 @@ class Reachability:
         exit_info = {}
         if exit_ip:
             exit_info = {"ip": exit_ip, "entry": entry_ip, "same": bool(entry_ip) and exit_ip == entry_ip}
-            if exit_res:
-                vals = [v for v in exit_res.values() if v is not None]
-                exit_info["ru"] = f"{sum(vals)}/{len(vals)}" if vals else ""
         now = int(time.time())
         base = {"ru": out_rows, "time": now, "host": host, "port": port, "diagnosis": diagnosis, "exit": exit_info,
                 "skipped": skipped}
@@ -358,11 +354,7 @@ def describe(result: dict, host: str, port: int) -> str:
     elif ex.get("same"):
         lines.append(f"ℹ️ Вход и выход через один IP {ex['ip']} — российские сайты видят адрес подключения")
     elif ex.get("ip") and ex.get("entry"):
-        ru = ex.get("ru", "")
-        blocked = ru and ru.startswith("0/")
-        lines.append(f"Вход: {ex['entry']} · выход: {ex['ip']}"
-                     + (" (из РФ заблокирован — это не мешает: к нему никто не подключается)" if blocked
-                        else f" (из РФ открывается в {ru})" if ru else ""))
+        lines.append(f"Вход: {ex['entry']} · выход: {ex['ip']} (сайты видят выход, к нему никто не подключается)")
     if result.get("ru_summary"):
         skipped = result.get("skipped")
         lines.append(f"Из России: подключение проходит в {result['ru_summary']} проверок"
