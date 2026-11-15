@@ -494,10 +494,10 @@ def setup(service: Service) -> Router:
 
     @router.callback_query(F.data == "reach")
     async def reach(cb: CallbackQuery) -> None:
-        await cb.answer("Проверяю с узлов в России, до 1–2 минут…")
+        await cb.answer("Проверяю с узлов в России, до 2–3 минут…")
         port = config.XHTTP_PORT or config.XRAY_PORT
         async with aiohttp.ClientSession() as session:
-            result = await service.reach.check(session, service.host, port)
+            result = await service.check_reach(session)
         if result["state"] != "error":
             db.set("watch_last", json.dumps(result))
             db.set("watch_state", result["state"])

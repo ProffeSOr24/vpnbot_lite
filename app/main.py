@@ -80,8 +80,17 @@ async def keep_reachable(service: Service, bot: Bot) -> None:
                 if service.db.get("watch_enabled", "1") == "1" and time.time() - last_check > 3600:
                     last_check = time.time()
                     port = config.XHTTP_PORT or config.XRAY_PORT
-                    result = await service.reach.check(session, service.host, port)
+                    result = await service.check_reach(session)
                     service.db.set("watch_last", json.dumps(result))
+                    exit_same = "1" if (result.get("exit") or {}).get("same") and config.DDNS_IP else "0"
+                    if exit_same != service.db.get("exit_same", "0"):
+                        service.db.set("exit_same", exit_same)
+                        if exit_same == "1":
+                            await notify(bot, f"⚠️ Сервер выходит в интернет через входной IP {config.DDNS_IP}: "
+                                              "российские сайты теперь видят адрес, к которому подключаются люди. "
+                                              "Проверьте у хостера, какой IP основной (выходить должен другой).")
+                        else:
+                            await notify(bot, "✅ Выход в интернет снова идёт не через входной IP.", silent=True)
                     if result["state"] != "error":
                         service.db.add_reach(int(time.time()), result["state"])
                     previous = service.db.get("watch_state", "ok")
@@ -176,8 +185,7 @@ async def health_problems(service: Service, session: aiohttp.ClientSession, base
             writer.close()
         except (OSError, asyncio.TimeoutError):
             problems.append(f"Xray не принимает подключения на порту {config.XRAY_PORT}")
-    port = config.XHTTP_PORT or config.XRAY_PORT
-    result = await service.reach.check(session, service.host, port)
+    result = await service.check_reach(session)
     if result["state"] == "down" and baseline != "down":
         problems.append("сервер не отвечает ни из России, ни из-за рубежа")
     elif result["state"] == "error" and not problems:

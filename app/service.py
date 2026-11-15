@@ -11,12 +11,13 @@ import secrets
 import socket
 import ssl
 import time
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlsplit
 
 import aiohttp
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
+from . import watch
 from .watch import Reachability
 from . import config
 from .cores import AWG_PARAMS, XHTTP_CLIENT, AmneziaWG, Xray, awg_client_lines, awg_param_lines
@@ -286,6 +287,36 @@ class Service:
             except OSError:
                 return self.host
         return ip
+
+    # --- reachability ---
+    def _alt_port(self, port: int) -> int:
+        """Another port the server surely listens on — tells «the whole IP is blocked» from «one port is»."""
+        if config.XRAY_PORT and config.XRAY_PORT != port:
+            return config.XRAY_PORT  # the REALITY TCP inbound always listens (with no clients it is the decoy)
+        if config.SUB_URL:
+            u = urlsplit(config.SUB_URL)
+            if u.hostname == self.host:
+                return u.port or (443 if u.scheme == "https" else 80)
+            return 0
+        return config.SUB_PORT if config.SUB_PORT != port else 0
+
+    async def check_reach(self, session: aiohttp.ClientSession) -> dict:
+        """Reachability of the VPN port from Russia, with the diagnosis and the entry/exit IPs."""
+        port = config.XHTTP_PORT or config.XRAY_PORT
+        host = self.host
+        try:
+            ipaddress.ip_address(host)
+            entry = host
+        except ValueError:
+            entry = config.DDNS_IP or self.db.get("ddns_ip") or ""
+            if not entry:
+                try:
+                    entry = (await asyncio.get_running_loop().getaddrinfo(host, None, family=socket.AF_INET))[0][4][0]
+                except OSError:
+                    entry = ""
+        exit_ip = await watch.public_ip(session) or ""
+        return await self.reach.check(session, host, port, alt_port=self._alt_port(port), sni=bool(self.self_sni),
+                                      entry_ip=entry, exit_ip=exit_ip)
 
     # --- links ---
     def sub_url(self, user) -> str:
