@@ -316,7 +316,8 @@ class Service:
                     entry = ""
         exit_ip = await watch.public_ip(session) or ""
         return await self.reach.check(session, host, port, alt_port=self._alt_port(port), sni=bool(self.self_sni),
-                                      entry_ip=entry, exit_ip=exit_ip)
+                                      entry_ip=entry, exit_ip=exit_ip, old_ip=self.db.get("ddns_old_ip") or "",
+                                      changed_at=int(self.db.get("ddns_changed_ts") or 0))
 
     # --- links ---
     def sub_url(self, user) -> str:

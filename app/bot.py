@@ -498,7 +498,7 @@ def setup(service: Service) -> Router:
         port = config.XHTTP_PORT or config.XRAY_PORT
         async with aiohttp.ClientSession() as session:
             result = await service.check_reach(session)
-        if result["state"] != "error":
+        if result["state"] != "error" and not (result.get("dc_only") and result["state"] == "ok"):
             db.set("watch_last", json.dumps(result))
             db.set("watch_state", result["state"])
         await cb.message.answer(watch.describe(result, service.host, port), reply_markup=kb([("📊 Сервер", "server")]))

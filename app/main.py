@@ -67,6 +67,9 @@ async def keep_reachable(service: Service, bot: Bot) -> None:
                         if await watch.duckdns_update(session, config.DDNS_DOMAIN, config.DDNS_TOKEN, ip):
                             old = service.db.get("ddns_ip")
                             service.db.set("ddns_ip", ip)
+                            if old:  # the watcher tells DNS caches still holding the old address from a block
+                                service.db.set("ddns_old_ip", old)
+                                service.db.set("ddns_changed_ts", int(time.time()))
                             service.db.set("country_ts", "0")  # new IP — maybe another country
                             await service.detect_country()
                             if old:
@@ -91,10 +94,12 @@ async def keep_reachable(service: Service, bot: Bot) -> None:
                                               "Проверьте у хостера, какой IP основной (выходить должен другой).")
                         else:
                             await notify(bot, "✅ Выход в интернет снова идёт не через входной IP.", silent=True)
-                    if result["state"] != "error":
-                        service.db.add_reach(int(time.time()), result["state"])
+                    # without Globalping only 2 datacenters were asked — they never see a block at home providers,
+                    # so such a check neither clears an alarm nor goes into the weekly report
+                    state = "error" if result.get("dc_only") and result["state"] == "ok" else result["state"]
+                    if state != "error":
+                        service.db.add_reach(int(time.time()), state)
                     previous = service.db.get("watch_state", "ok")
-                    state = result["state"]
                     if state == "error" or state == previous:
                         pending = None
                     elif state != "ok" and pending != state:

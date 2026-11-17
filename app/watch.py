@@ -1,5 +1,6 @@
 """Keeping the server reachable: DuckDNS follows the server's IP, check-host.net shows whether Russia can reach it."""
 import asyncio
+import datetime
 import logging
 import time
 
@@ -43,6 +44,8 @@ async def duckdns_update(session: aiohttp.ClientSession, domain: str, token: str
 
 
 CONTROL = ("ya.ru", "www.google.com")  # asked from a failed node: does it reach anything at all?
+STALE_WINDOW = 86400  # after an IP change, probes that still go to the old IP are DNS cache, not a block
+MSK = datetime.timezone(datetime.timedelta(hours=3))
 
 
 class Reachability:
@@ -53,6 +56,7 @@ class Reachability:
 
     def __init__(self) -> None:
         self._nodes: tuple[float, dict] = (0.0, {})
+        self.gp_limit: dict = {}  # Globalping's free quota: {'remaining', 'limit', 'reset_at'}
 
     async def _get(self, session: aiohttp.ClientSession, path: str, **params) -> dict:
         async with session.get(CHECK_HOST + path, params=params, headers=HEADERS,
@@ -117,6 +121,14 @@ class Reachability:
         """Run a measurement; (id, results). locations may be an earlier measurement's id: the same probes."""
         async with session.post(f"{GLOBALPING}/measurements", json=body, headers=HEADERS,
                                 timeout=aiohttp.ClientTimeout(total=20)) as r:
+            try:
+                self.gp_limit = {"remaining": int(r.headers["X-RateLimit-Remaining"]),
+                                 "limit": int(r.headers["X-RateLimit-Limit"]),
+                                 "reset_at": int(time.time()) + int(r.headers["X-RateLimit-Reset"])}
+            except (KeyError, ValueError):
+                pass
+            if r.status == 429:
+                raise RuntimeError("исчерпан лимит проверок")
             if r.status >= 400:
                 raise RuntimeError(f"HTTP {r.status}")
             mid = (await r.json(content_type=None))["id"]
@@ -148,7 +160,8 @@ class Reachability:
             probe = item.get("probe", {})
             rows.append({"name": provider_name(probe.get("network", "?")), "city": probe.get("city", "?"),
                          "ping": "-", "tcp": self._gp_tcp_ok(item), "src": "gp", "ref": i,
-                         "probe": (probe.get("asn"), probe.get("city"))})
+                         "probe": (probe.get("asn"), probe.get("city")),
+                         "ip": item.get("result", {}).get("resolvedAddress")})
         return mid, rows
 
     async def _gp_same(self, session: aiohttp.ClientSession, mid: str, rows: list, body: dict, judge) -> dict:
@@ -194,24 +207,65 @@ class Reachability:
             "type": "dns", "target": host, "measurementOptions": {"query": {"type": "A"}}}, judge)
 
     # ---------- the check ----------
+    async def _control(self, session, mid: str, ch_failed: list, gp_failed: list) -> tuple[dict, dict]:
+        """Failed nodes: does google.com open there, and if not, ya.ru? ({ch node: (ya, google)}, {gp ref: …}).
+        ya.ru is asked only where google failed — most failures are real, so this saves half the probes."""
+        async def ch_part():
+            if not ch_failed:
+                return {}
+            google = (await self._ch_tcp(session, [f"{CONTROL[1]}:443"], ch_failed))[f"{CONTROL[1]}:443"]
+            again = [n for n in ch_failed if google.get(n) is False]
+            ya = (await self._ch_tcp(session, [f"{CONTROL[0]}:443"], again))[f"{CONTROL[0]}:443"] if again else {}
+            return {n: (ya.get(n), google.get(n)) for n in ch_failed}
+
+        async def gp_part():
+            if not (mid and gp_failed):
+                return {}
+            google = await self._gp_tcp(session, mid, gp_failed, CONTROL[1], 443)
+            again = [r for r in gp_failed if google.get(r["ref"]) is False]
+            ya = await self._gp_tcp(session, mid, again, CONTROL[0], 443) if again else {}
+            return {r["ref"]: (ya.get(r["ref"]), google.get(r["ref"])) for r in gp_failed}
+
+        ch_res, gp_res = await asyncio.gather(ch_part(), gp_part(), return_exceptions=True)
+        return ({} if isinstance(ch_res, BaseException) else ch_res,
+                {} if isinstance(gp_res, BaseException) else gp_res)
+
     async def check(self, session: aiohttp.ClientSession, host: str, port: int, *, alt_port: int = 0,
-                    sni: bool = False, entry_ip: str = "", exit_ip: str = "") -> dict:
+                    sni: bool = False, entry_ip: str = "", exit_ip: str = "", old_ip: str = "",
+                    changed_at: int = 0) -> dict:
         """{'state': ok|partial|blocked|down|error, 'ru': [[provider, city, ping_ok|'-', tcp_ok, note]],
-        'abroad': n_ok/n, 'diagnosis': [...], 'exit': {...}}. Sources run in parallel; any may fail alone."""
+        'abroad': n_ok/n, 'diagnosis': [...], 'exit': {...}, 'move': {...}, 'gp_limit': {...}}.
+        Sources run in parallel; any may fail alone."""
         ch, gp = await asyncio.gather(self._check_host(session, host, port), self._globalping(session, host, port),
                                       return_exceptions=True)
-        errors = []
+        errors, gp_error = [], ""
         if isinstance(ch, BaseException):
             errors.append(f"check-host.net: {ch or type(ch).__name__}")
             ch = ([], [])
         mid = ""
         if isinstance(gp, BaseException):
-            errors.append(f"Globalping: {gp or type(gp).__name__}")
+            gp_error = str(gp) or type(gp).__name__
+            errors.append(f"Globalping: {gp_error}")
             gp = []
         else:
             mid, gp = gp
         rows, abroad_res = ch[0] + gp, ch[1]
-        gp_rows = [r for r in rows if r["src"] == "gp"]
+        for r in rows:
+            r["note"] = None
+
+        # after an IP change: probes whose DNS cache still holds the old address are not a block
+        now = int(time.time())
+        moving = bool(old_ip and entry_ip and old_ip != entry_ip and now - changed_at < STALE_WINDOW)
+        move = {}
+        if moving:
+            seen = [r for r in rows if r["src"] == "gp" and r.get("ip")]
+            for r in seen:
+                if r["ip"] == old_ip:
+                    r["note"] = "stale"
+            move = {"old": old_ip, "new": entry_ip, "at": changed_at, "total": len(seen),
+                    "fresh": sum(r["ip"] == entry_ip for r in seen), "stale": sum(r["note"] == "stale" for r in seen)}
+
+        gp_rows = [r for r in rows if r["src"] == "gp" and r["note"] != "stale"]
         ch_failed = [r["ref"] for r in rows if r["src"] == "ch" and r["tcp"] is False]
         gp_failed = [r for r in gp_rows if r["tcp"] is False]
 
@@ -226,26 +280,21 @@ class Reachability:
 
         # 1. failed nodes: can they reach anything? 2. the name (SNI) from every probe. The exit IP is never probed:
         # the same probe touching the entry and the exit would tie the two addresses together
-        step = await asyncio.gather(
-            maybe(ch_failed, self._ch_tcp(session, [f"{c}:443" for c in CONTROL], ch_failed)),
-            maybe(mid and gp_failed, self._gp_tcp(session, mid, gp_failed, CONTROL[0], 443)),
-            maybe(mid and gp_failed, self._gp_tcp(session, mid, gp_failed, CONTROL[1], 443)),
-            maybe(mid and sni, self._gp_tls(session, mid, gp_rows, host, port)),
-            return_exceptions=True)
-        step = [{} if isinstance(x, BaseException) else x for x in step]
-        ch_ctl, gp_ya, gp_google, tls = step
+        ctl, tls = await asyncio.gather(self._control(session, mid, ch_failed, gp_failed),
+                                        maybe(mid and sni, self._gp_tls(session, mid, gp_rows, host, port)),
+                                        return_exceptions=True)
+        ch_ctl, gp_ctl = ({}, {}) if isinstance(ctl, BaseException) else ctl
+        tls = {} if isinstance(tls, BaseException) else tls
         for r in rows:
-            r["note"] = None
+            if r["note"] == "stale":
+                continue
             if r["tcp"] is False:
-                if r["src"] == "ch":
-                    ya, google = (ch_ctl.get(f"{c}:443", {}).get(r["ref"]) for c in CONTROL)
-                else:
-                    ya, google = gp_ya.get(r["ref"]), gp_google.get(r["ref"])
-                if ya is False and google is False:
+                ya, google = (ch_ctl if r["src"] == "ch" else gp_ctl).get(r["ref"], (None, None))
+                if google is False and ya is False:
                     r["note"] = "offline"
-                elif ya and google is False:
+                elif google is False and ya:
                     r["note"] = "no_foreign"
-            elif r["tcp"] and tls.get(r["ref"]) is False and r["src"] == "gp":
+            elif r["tcp"] and r["src"] == "gp" and tls.get(r["ref"]) is False:
                 r["note"] = "sni"
 
         diagnosis = []
@@ -254,17 +303,17 @@ class Reachability:
             diagnosis.append(f"🟠 Блокировка по имени (SNI): у {sni_n} узлов порт открыт, но соединение с именем "
                              f"{host} обрывается → поможет другой домен")
 
-        counted = [r for r in rows if r["note"] not in ("offline", "no_foreign")]
+        counted = [r for r in rows if r["note"] not in ("offline", "no_foreign", "stale")]
         known = [(r["tcp"] and r["note"] != "sni") for r in counted if r["tcp"] is not None]
         ru_ok, failed = sum(known), len(known) - sum(known)
-        skipped = len(rows) - len(counted)
+        skipped = sum(r["note"] in ("offline", "no_foreign") for r in rows)
         out_rows = [[r["name"], r["city"], r["ping"], r["tcp"], r["note"]] for r in rows]
         exit_info = {}
         if exit_ip:
             exit_info = {"ip": exit_ip, "entry": entry_ip, "same": bool(entry_ip) and exit_ip == entry_ip}
-        now = int(time.time())
         base = {"ru": out_rows, "time": now, "host": host, "port": port, "diagnosis": diagnosis, "exit": exit_info,
-                "skipped": skipped}
+                "skipped": skipped, "move": move, "gp_error": gp_error, "gp_limit": dict(self.gp_limit),
+                "dc_only": bool(gp_error)}
         abroad_ok = sum(abroad_res)
         if not known:
             return {**base, "state": "error", "error": "; ".join(errors) or "проверочные узлы не ответили вовремя"}
@@ -279,18 +328,25 @@ class Reachability:
         else:
             return {**base, "state": "error", "error": "узлы за рубежом не ответили — нечем сравнить"}
 
-        # 3. what exactly is blocked, from the nodes that really failed
+        # 3. what exactly is blocked, from the nodes that really failed: another port first, DNS only where that
+        # port is closed too (a wrong address closes every port)
         real = [r for r in rows if r["tcp"] is False and not r["note"]]
-        if real and state in ("partial", "blocked"):
+        if real and state in ("partial", "blocked") and alt_port:
             alt_target = f"{host}:{alt_port}"
             gp_real = [r for r in real if r["src"] == "gp"]
             ch_real = [r["ref"] for r in real if r["src"] == "ch"]
-            alt_ch, alt_gp, dns = await asyncio.gather(
-                maybe(alt_port and ch_real, self._ch_tcp(session, [alt_target], ch_real)),
-                maybe(mid and alt_port and gp_real, self._gp_tcp(session, mid, gp_real, host, alt_port)),
-                maybe(mid and gp_real and entry_ip and entry_ip != host, self._gp_dns(session, mid, gp_real, host)),
+            alt_ch, alt_gp = await asyncio.gather(
+                maybe(ch_real, self._ch_tcp(session, [alt_target], ch_real)),
+                maybe(mid and gp_real, self._gp_tcp(session, mid, gp_real, host, alt_port)),
                 return_exceptions=True)
-            alt_ch, alt_gp, dns = ({} if isinstance(x, BaseException) else x for x in (alt_ch, alt_gp, dns))
+            alt_ch, alt_gp = ({} if isinstance(x, BaseException) else x for x in (alt_ch, alt_gp))
+            closed = [r for r in gp_real if alt_gp.get(r["ref"]) is False]
+            dns = {}
+            if mid and closed and entry_ip and entry_ip != host:
+                try:
+                    dns = await self._gp_dns(session, mid, closed, host)
+                except Exception:  # noqa: BLE001 - the diagnosis is optional
+                    dns = {}
             kinds = {"ip": 0, "port": 0, "dns": 0}
             for r in real:
                 answers = dns.get(r["ref"]) if r["src"] == "gp" else None
@@ -310,9 +366,9 @@ class Reachability:
             if kinds["dns"]:
                 diagnosis.append(f"🟠 Подмена DNS: с {kinds['dns']} из {len(real)} узлов имя {host} указывает не на "
                                  f"{entry_ip}")
+        base["gp_limit"] = dict(self.gp_limit)
         return {**base, "state": state, "ru_summary": f"{ru_ok}/{len(known)}",
                 "abroad": f"{abroad_ok}/{len(abroad_res)}" if abroad_res else ""}
-
 
 STATE_TEXT = {
     "ok": "🟢 доступен из России",
@@ -326,7 +382,13 @@ NOTES = {
     "no_foreign": "⚠️ {city}, {name}: провайдер закрыл зарубежные сайты (google.com тоже не открывается) — "
                   "не учитывается",
     "sni": "❌ {city}, {name}: порт {port} открыт, но соединение с именем сервера обрывается",
+    "stale": "⏳ {city}, {name}: ещё помнит старый IP — не учитывается",
 }
+
+
+def _ago(seconds: int) -> str:
+    minutes = max(1, seconds // 60)
+    return f"{minutes} мин" if minutes < 60 else f"{minutes // 60} ч {minutes % 60} мин"
 
 
 def _mark(value: bool | None) -> str:
@@ -355,6 +417,17 @@ def describe(result: dict, host: str, port: int) -> str:
         lines.append(f"ℹ️ Вход и выход через один IP {ex['ip']} — российские сайты видят адрес подключения")
     elif ex.get("ip") and ex.get("entry"):
         lines.append(f"Вход: {ex['entry']} · выход: {ex['ip']} (сайты видят выход, к нему никто не подключается)")
+    move = result.get("move") or {}
+    if move and (move.get("stale") or result.get("time", 0) - move.get("at", 0) < 7200):
+        lines.append(f"🔄 IP сменился {_ago(result.get('time', 0) - move['at'])} назад ({move['old']} → {move['new']})")
+        if move.get("stale"):
+            lines.append(f"   Новый адрес уже видят {move['fresh']} из {move['total']} узлов, {move['stale']} ещё "
+                         "помнят старый — обновятся сами, обычно за 1–2 часа")
+        elif move.get("total"):
+            lines.append(f"   Новый адрес уже видят все узлы ({move['total']} из {move['total']})")
+    if result.get("gp_error"):
+        lines.append(f"⚠️ Домашние провайдеры не проверены (Globalping: {result['gp_error']}) — результат только "
+                     "по дата-центрам, блокировку у провайдеров он не покажет")
     if result.get("ru_summary"):
         skipped = result.get("skipped")
         lines.append(f"Из России: подключение проходит в {result['ru_summary']} проверок"
@@ -372,4 +445,10 @@ def describe(result: dict, host: str, port: int) -> str:
         lines += result["diagnosis"]
     if result.get("abroad"):
         lines.append(f"Из-за рубежа (контроль): {result['abroad']} узлов отвечают")
+    limit = result.get("gp_limit") or {}
+    if limit.get("limit"):
+        reset = limit["reset_at"] - result.get("time", 0)
+        lines.append(f"Лимит Globalping: осталось {limit['remaining']} из {limit['limit']}, сброс в "
+                     f"{datetime.datetime.fromtimestamp(limit['reset_at'], MSK):%H:%M}"
+                     + (f" (через {_ago(reset)})" if reset > 0 else ""))
     return "\n".join(lines)
