@@ -2,6 +2,7 @@
 subscription server, background jobs — with Telegram faked. A crash between start and polling fails the build,
 so a broken version never reaches the servers (1.27.0 crashed right there)."""
 import asyncio
+import base64
 import os
 import shutil
 import sys
@@ -45,6 +46,15 @@ async def polling(self, *a, **kw):
             assert r.headers.get("routing-enable") == "0" and "routing" not in r.headers
         async with s.get(f"http://127.0.0.1:29096/sub/{token}", headers={"Accept": "text/html"}) as r:
             assert r.status == 200 and "Добавить в Happ" in await r.text(), r.status
+        # 🧪 per-user test profile: only this user gets Firefox + 2 XHTTP connections
+        async with s.get(f"http://127.0.0.1:29096/sub/{token}") as r:
+            links = base64.b64decode(await r.text()).decode()
+        assert "fp=chrome" in links and "maxConcurrency" in links, links
+        db.update_user(uid, tuning=1)
+        async with s.get(f"http://127.0.0.1:29096/sub/{token}") as r:
+            links = base64.b64decode(await r.text()).decode()
+        assert "fp=firefox" in links and "fp=chrome" not in links, links
+        assert "%22maxConnections%22%3A2" in links and "maxConcurrency" not in links, links
 
 
 with mock.patch("aiogram.Bot.send_message", send_message), mock.patch("aiogram.Bot.set_my_commands", ok), \

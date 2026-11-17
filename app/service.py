@@ -20,7 +20,7 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from . import watch
 from .watch import Reachability
 from . import config
-from .cores import AWG_PARAMS, XHTTP_CLIENT, AmneziaWG, Xray, awg_client_lines, awg_param_lines
+from .cores import AWG_PARAMS, XHTTP_CLIENT, XHTTP_CLIENT_TUNED, AmneziaWG, Xray, awg_client_lines, awg_param_lines
 from .db import DB, wg_keypair
 
 log = logging.getLogger(__name__)
@@ -324,22 +324,28 @@ class Service:
         base = config.SUB_URL or f"http://{self._host_for_url()}:{config.SUB_PORT}"
         return f"{base}/sub/{user['token']}"
 
-    def _reality_params(self, s: dict) -> dict:
+    @staticmethod
+    def tuned(user) -> bool:
+        """The user tests Firefox fingerprint + 2 XHTTP connections (🧪 in the card)."""
+        return bool(user["tuning"]) if "tuning" in user.keys() else False
+
+    def _reality_params(self, s: dict, user=None) -> dict:
         # own domain: the name matches the IP and the site behind it; without SNI the client sends no name at all
         sni = s["self_sni"] or ("" if s.get("reality_nosni") == "1" else s["reality_sni"])
         return {"security": "reality", "encryption": "none", "pbk": s["reality_public"], "sid": s["reality_sid"],
-                "sni": sni, "fp": "chrome"}
+                "sni": sni, "fp": "firefox" if user is not None and self.tuned(user) else "chrome"}
 
     def vless_link(self, user) -> str:
         s = self.settings()
-        params = {"type": "tcp", "flow": "xtls-rprx-vision", **self._reality_params(s)}
+        params = {"type": "tcp", "flow": "xtls-rprx-vision", **self._reality_params(s, user)}
         return (f"vless://{user['uuid']}@{self._reality_host()}:{config.XRAY_PORT}"
                 f"?{urlencode(params)}#{quote(self.remark('Reality'))}")
 
     def xhttp_link(self, user) -> str:
         s = self.settings()
+        extra = XHTTP_CLIENT_TUNED if self.tuned(user) else XHTTP_CLIENT
         params = {"type": "xhttp", "path": s["xhttp_path"], "mode": "packet-up",
-                  "extra": json.dumps(XHTTP_CLIENT, separators=(",", ":")), **self._reality_params(s)}
+                  "extra": json.dumps(extra, separators=(",", ":")), **self._reality_params(s, user)}
         return (f"vless://{user['uuid']}@{self._reality_host()}:{config.XHTTP_PORT}"
                 f"?{urlencode(params)}#{quote(self.remark('XHTTP'))}")
 

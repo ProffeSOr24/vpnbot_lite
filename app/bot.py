@@ -39,7 +39,7 @@ class Input(StatesGroup):
 
 def kb(*rows: list[tuple[str, str]]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=t, callback_data=d) for t, d in row] for row in rows])
+        [InlineKeyboardButton(text=t, callback_data=d) for t, d in row] for row in rows if row])
 
 
 BACK = [("⬅️ Меню", "menu")]
@@ -205,6 +205,8 @@ def setup(service: Service) -> Router:
                 f"Создан: {fmt_date(u['created_at'])}\n"
                 f"Доступ: {PROTOS[u['proto']]}\n"
                 f"Сейчас: {service.presence(u)[1]}")
+        if service.tuned(u):
+            text += "\n🧪 Тест: отпечаток Firefox и не больше 2 соединений XHTTP"
         i = u["id"]
         get = [b for b in (("🔗 Ключи и QR", f"links:{i}") if uses(u, "vless") else None,
                            ("📡 AWG приложение", f"awg:{i}") if uses(u, "awg") else None,
@@ -214,6 +216,8 @@ def setup(service: Service) -> Router:
                     [("⏸ Отключить" if u["enabled"] else "▶️ Включить", f"toggle:{i}"),
                      ("📅 Срок", f"days:{i}"), ("📦 Лимит", f"limit:{i}")],
                     [("🔄 Сбросить трафик", f"reset:{i}"), ("🗑 Удалить", f"del:{i}")],
+                    [(f"🧪 Тест Firefox + 2 соединения: {'вкл' if service.tuned(u) else 'выкл'}", f"tune:{i}")]
+                    if uses(u, "vless") else [],
                     [("⬅️ Пользователи", "users")])
         return text, markup
 
@@ -289,6 +293,17 @@ def setup(service: Service) -> Router:
             fields.update(up=0, down=0)
         db.update_user(u["id"], **fields)
         await apply(cb)
+        await show(cb, *user_card(db.user(u["id"])))
+
+    @router.callback_query(F.data.startswith("tune:"))
+    async def user_tune(cb: CallbackQuery) -> None:
+        u = await get_user(cb)
+        if not u:
+            return
+        on = not service.tuned(u)
+        db.update_user(u["id"], tuning=int(on))
+        await cb.answer(("🧪 Включено" if on else "Выключено") + " только для этого пользователя. "
+                        "В Happ обновите подписку (потяните список вниз) и переподключитесь.", show_alert=True)
         await show(cb, *user_card(db.user(u["id"])))
 
     @router.callback_query(F.data.startswith("reset:"))
