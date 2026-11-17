@@ -208,22 +208,17 @@ class Reachability:
 
     # ---------- the check ----------
     async def _control(self, session, mid: str, ch_failed: list, gp_failed: list) -> tuple[dict, dict]:
-        """Failed nodes: does google.com open there, and if not, ya.ru? ({ch node: (ya, google)}, {gp ref: …}).
-        ya.ru is asked only where google failed — most failures are real, so this saves half the probes."""
+        """Failed nodes: do ya.ru and google.com open there? ({ch node: (ya, google)}, {gp ref: (ya, google)})."""
         async def ch_part():
             if not ch_failed:
                 return {}
-            google = (await self._ch_tcp(session, [f"{CONTROL[1]}:443"], ch_failed))[f"{CONTROL[1]}:443"]
-            again = [n for n in ch_failed if google.get(n) is False]
-            ya = (await self._ch_tcp(session, [f"{CONTROL[0]}:443"], again))[f"{CONTROL[0]}:443"] if again else {}
-            return {n: (ya.get(n), google.get(n)) for n in ch_failed}
+            res = await self._ch_tcp(session, [f"{c}:443" for c in CONTROL], ch_failed)
+            return {n: tuple(res[f"{c}:443"].get(n) for c in CONTROL) for n in ch_failed}
 
         async def gp_part():
             if not (mid and gp_failed):
                 return {}
-            google = await self._gp_tcp(session, mid, gp_failed, CONTROL[1], 443)
-            again = [r for r in gp_failed if google.get(r["ref"]) is False]
-            ya = await self._gp_tcp(session, mid, again, CONTROL[0], 443) if again else {}
+            ya, google = await asyncio.gather(*(self._gp_tcp(session, mid, gp_failed, c, 443) for c in CONTROL))
             return {r["ref"]: (ya.get(r["ref"]), google.get(r["ref"])) for r in gp_failed}
 
         ch_res, gp_res = await asyncio.gather(ch_part(), gp_part(), return_exceptions=True)
@@ -328,25 +323,18 @@ class Reachability:
         else:
             return {**base, "state": "error", "error": "узлы за рубежом не ответили — нечем сравнить"}
 
-        # 3. what exactly is blocked, from the nodes that really failed: another port first, DNS only where that
-        # port is closed too (a wrong address closes every port)
+        # 3. what exactly is blocked, from the nodes that really failed
         real = [r for r in rows if r["tcp"] is False and not r["note"]]
         if real and state in ("partial", "blocked") and alt_port:
             alt_target = f"{host}:{alt_port}"
             gp_real = [r for r in real if r["src"] == "gp"]
             ch_real = [r["ref"] for r in real if r["src"] == "ch"]
-            alt_ch, alt_gp = await asyncio.gather(
+            alt_ch, alt_gp, dns = await asyncio.gather(
                 maybe(ch_real, self._ch_tcp(session, [alt_target], ch_real)),
                 maybe(mid and gp_real, self._gp_tcp(session, mid, gp_real, host, alt_port)),
+                maybe(mid and gp_real and entry_ip and entry_ip != host, self._gp_dns(session, mid, gp_real, host)),
                 return_exceptions=True)
-            alt_ch, alt_gp = ({} if isinstance(x, BaseException) else x for x in (alt_ch, alt_gp))
-            closed = [r for r in gp_real if alt_gp.get(r["ref"]) is False]
-            dns = {}
-            if mid and closed and entry_ip and entry_ip != host:
-                try:
-                    dns = await self._gp_dns(session, mid, closed, host)
-                except Exception:  # noqa: BLE001 - the diagnosis is optional
-                    dns = {}
+            alt_ch, alt_gp, dns = ({} if isinstance(x, BaseException) else x for x in (alt_ch, alt_gp, dns))
             kinds = {"ip": 0, "port": 0, "dns": 0}
             for r in real:
                 answers = dns.get(r["ref"]) if r["src"] == "gp" else None
