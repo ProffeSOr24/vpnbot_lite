@@ -19,6 +19,9 @@ SERVER_HOST = os.environ.get("SERVER_HOST", "").strip()
 SERVER_COUNTRY = os.environ.get("SERVER_COUNTRY", "").strip().upper()
 XRAY_PORT = _int("XRAY_PORT", 443)
 XHTTP_PORT = _int("XHTTP_PORT", 8443)  # VLESS XHTTP + Reality; 0 disables
+# VLESS=0: no Xray at all — only AmneziaWG; everything about VLESS/XHTTP/Reality disappears from the bot, and Caddy
+# shows the notes site on 443 itself (`./vpn.sh restart` sets DECOY_PORT=443, DECOY_BIND=0.0.0.0)
+VLESS = os.environ.get("VLESS", "1").strip() != "0"
 SUB_PORT = _int("SUB_PORT", 2096)
 SUB_LISTEN = os.environ.get("SUB_LISTEN", "0.0.0.0").strip()  # 127.0.0.1 when Caddy serves HTTPS in front
 AWG_PORT = _int("AWG_PORT", 51820)
@@ -35,6 +38,7 @@ SUB_KEY = os.environ.get("SUB_KEY", "").strip()
 # certificate — Caddy serves it on 127.0.0.1:DECOY_PORT (see `./vpn.sh stealth`)
 SELF_SNI = os.environ.get("SELF_SNI", "").strip() == "1"
 DECOY_PORT = _int("DECOY_PORT", 9443)
+DECOY_BIND = os.environ.get("DECOY_BIND", "127.0.0.1").strip()  # 0.0.0.0 — the site is public (VLESS=0)
 
 # DuckDNS: the bot keeps <name>.duckdns.org pointed at the server, so a new IP needs no changes on devices
 DDNS_DOMAIN = os.environ.get("DDNS_DOMAIN", "").strip()

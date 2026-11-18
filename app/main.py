@@ -82,7 +82,7 @@ async def keep_reachable(service: Service, bot: Bot) -> None:
                             log.warning("duckdns update failed")
                 if service.db.get("watch_enabled", "1") == "1" and time.time() - last_check > 3600:
                     last_check = time.time()
-                    port = config.XHTTP_PORT or config.XRAY_PORT
+                    port = service.reach_port()
                     result = await service.check_reach(session)
                     service.db.set("watch_last", json.dumps(result))
                     exit_same = "1" if (result.get("exit") or {}).get("same") and config.DDNS_IP else "0"

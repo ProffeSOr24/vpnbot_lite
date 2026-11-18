@@ -45,10 +45,15 @@ async def polling(self, *a, **kw):
         async with s.get(f"http://127.0.0.1:29096/sub/{token}", headers={"User-Agent": "Happ/3.2.1"}) as r:
             assert r.headers.get("routing-enable") == "0" and "routing" not in r.headers
         async with s.get(f"http://127.0.0.1:29096/sub/{token}", headers={"Accept": "text/html"}) as r:
-            assert r.status == 200 and "Добавить в Happ" in await r.text(), r.status
-        # 🧪 per-user test profile: only this user gets Firefox + 2 XHTTP connections
+            page = await r.text()
+            assert r.status == 200 and ("Добавить в Happ" in page) == (os.environ.get("VLESS") != "0"), r.status
         async with s.get(f"http://127.0.0.1:29096/sub/{token}") as r:
             links = base64.b64decode(await r.text()).decode()
+        if os.environ.get("VLESS") == "0":  # AmneziaWG only: no VLESS key at all, Xray not started
+            assert "vless://" not in links, links
+            assert not (Path(os.environ["DATA_DIR"]) / "xray.json").exists(), "Xray configured with VLESS=0"
+            return
+        # 🧪 per-user test profile: only this user gets Firefox + 2 XHTTP connections
         assert "fp=chrome" in links and "maxConcurrency" in links, links
         db.update_user(uid, tuning=1)
         async with s.get(f"http://127.0.0.1:29096/sub/{token}") as r:

@@ -95,7 +95,7 @@ def setup(service: Service) -> Router:
         return (f"<b>VPN Bot Lite</b> v{config.VERSION}\n"
                 f"Сервер: <code>{html.escape(service.host)}</code>\n"
                 f"Пользователи: {active} активных из {len(users)}\n"
-                f"Xray: {dot(service.xray)}   AmneziaWG: {dot(service.awg)}")
+                + (f"Xray: {dot(service.xray)}   " if config.VLESS else "") + f"AmneziaWG: {dot(service.awg)}")
 
     @router.message(CommandStart())
     @router.message(Command("menu"))
@@ -129,7 +129,8 @@ def setup(service: Service) -> Router:
         match = {"": lambda u: True, "online": lambda u: u["id"] in online,
                  "offline": lambda u: u["id"] not in online}
         shown = [u for u in everyone if match.get(only, lambda u: uses(u, only))(u)]
-        shown.sort(key=lambda u: (list(ICON).index(u["proto"]), u["name"].lower()))
+        kind = (lambda u: u["proto"]) if config.VLESS else (lambda u: "awg")  # noqa: E731 - VLESS=0: AWG only
+        shown.sort(key=lambda u: (list(ICON).index(kind(u)), u["name"].lower()))
         pages = max(1, -(-len(shown) // PAGE))
         page = min(max(page, 0), pages - 1)
         views[viewer] = (only, page)
@@ -137,7 +138,7 @@ def setup(service: Service) -> Router:
         for u in shown[page * PAGE:(page + 1) * PAGE]:
             used = fmt_bytes(u["up"] + u["down"])
             dot = "🟢" if u["id"] in online else "🔴"
-            b.button(text=f"{dot}{service.user_status(u)} {ICON[u['proto']]} {u['name']} · {used}",
+            b.button(text=f"{dot}{service.user_status(u)} {ICON[kind(u)]} {u['name']} · {used}",
                      callback_data=f"u:{u['id']}")
         b.adjust(1)
         if pages > 1:
@@ -146,16 +147,19 @@ def setup(service: Service) -> Router:
         mark = lambda key: "• " if only == key else ""  # noqa: E731
         b.row(*kb([(f"{mark('')}Все", "uf:"), (f"{mark('online')}🟢 Онлайн", "uf:online"),
                    (f"{mark('offline')}🔴 Офлайн", "uf:offline")]).inline_keyboard[0])
-        b.row(*kb([(f"{mark('vless')}🔗 VLESS", "uf:vless"), (f"{mark('awg')}📡 AWG", "uf:awg")]).inline_keyboard[0])
+        if config.VLESS:
+            b.row(*kb([(f"{mark('vless')}🔗 VLESS", "uf:vless"),
+                       (f"{mark('awg')}📡 AWG", "uf:awg")]).inline_keyboard[0])
         b.row(*kb([("➕ Добавить", "add"), *BACK]).inline_keyboard[0])
         if everyone:
-            b.row(*kb([("🔁 Доступ для всех", "protoall"), ("🗑 Удалить всех", "delall")]).inline_keyboard[0])
+            row = ([("🔁 Доступ для всех", "protoall")] if config.VLESS else []) + [("🗑 Удалить всех", "delall")]
+            b.row(*kb(row).inline_keyboard[0])
         counts = {k: sum(1 for u in everyone if u["proto"] == k) for k in ICON}
         text = ("<b>Пользователи</b>\n"
                 f"🟢 Сейчас онлайн: <b>{len(online)}</b>   🔴 не в сети: {len(everyone) - len(online)}"
                 f"   (всего {len(everyone)})\n"
-                f"🔗📡 VLESS + AmneziaWG: {counts['both']}   🔗 только VLESS: {counts['vless']}   "
-                f"📡 только AmneziaWG: {counts['awg']}\n"
+                + (f"🔗📡 VLESS + AmneziaWG: {counts['both']}   🔗 только VLESS: {counts['vless']}   "
+                   f"📡 только AmneziaWG: {counts['awg']}\n" if config.VLESS else "")
                 + (f"Показано: {len(shown)} из {len(everyone)}\n" if only else "") +
                 "🟢 в сети  🔴 не в сети · ✅ активен  ⏳ скоро истекает  ⏸ отключён")
         await show(target, text, b.as_markup())
@@ -203,7 +207,7 @@ def setup(service: Service) -> Router:
                 f"Трафик: ↑{fmt_bytes(u['up'])} ↓{fmt_bytes(u['down'])} = "
                 f"<b>{fmt_bytes(u['up'] + u['down'])}</b> / {limit}\n"
                 f"Создан: {fmt_date(u['created_at'])}\n"
-                f"Доступ: {PROTOS[u['proto']]}\n"
+                f"Доступ: {PROTOS[u['proto']] if config.VLESS else 'AmneziaWG'}\n"
                 f"Сейчас: {service.presence(u)[1]}")
         if service.tuned(u):
             text += "\n🧪 Тест: отпечаток Firefox и не больше 2 соединений XHTTP"
@@ -212,7 +216,7 @@ def setup(service: Service) -> Router:
                            ("📡 AWG приложение", f"awg:{i}") if uses(u, "awg") else None,
                            ("📶 AWG роутер", f"awgr:{i}") if uses(u, "awg") else None) if b]
         markup = kb(get, [("🔁 Доступ: " + {"both": "оба", "vless": "VLESS", "awg": "AmneziaWG"}[u["proto"]],
-                           f"proto:{i}")],
+                           f"proto:{i}")] if config.VLESS else [],
                     [("⏸ Отключить" if u["enabled"] else "▶️ Включить", f"toggle:{i}"),
                      ("📅 Срок", f"days:{i}"), ("📦 Лимит", f"limit:{i}")],
                     [("🔄 Сбросить трафик", f"reset:{i}"), ("🗑 Удалить", f"del:{i}")],
@@ -490,8 +494,8 @@ def setup(service: Service) -> Router:
                 f"RAM: {fmt_bytes(mem.used)} / {fmt_bytes(mem.total)} ({mem.percent:.0f}%)\n"
                 f"Диск: {fmt_bytes(disk.used)} / {fmt_bytes(disk.total)} ({disk.percent:.0f}%)\n"
                 f"Сеть с загрузки ОС: ↑{fmt_bytes(net.bytes_sent)} ↓{fmt_bytes(net.bytes_recv)}\n\n"
-                f"{core_line(service.xray, xv)}\n"
-                f"{core_line(service.awg, await service.awg.version())}\n\n"
+                + (f"{core_line(service.xray, xv)}\n" if config.VLESS else "")
+                + f"{core_line(service.awg, await service.awg.version())}\n\n"
                 f"Трафик пользователей (всего): {fmt_bytes(total)}")
         if config.DDNS_DOMAIN:
             text += f"\n\n🌐 DuckDNS: {html.escape(config.DDNS_DOMAIN)} → {db.get('ddns_ip') or '…'}"
@@ -510,7 +514,7 @@ def setup(service: Service) -> Router:
     @router.callback_query(F.data == "reach")
     async def reach(cb: CallbackQuery) -> None:
         await cb.answer("Проверяю с узлов в России, до 2–3 минут…")
-        port = config.XHTTP_PORT or config.XRAY_PORT
+        port = service.reach_port()
         async with aiohttp.ClientSession() as session:
             result = await service.check_reach(session)
         if result["state"] != "error" and not (result.get("dc_only") and result["state"] == "ok"):
@@ -588,7 +592,7 @@ def setup(service: Service) -> Router:
         await cb.answer("Проверяю…")
         rows, lines = [], ["<b>Обновления</b>\n"]
         async with aiohttp.ClientSession() as session:
-            for core in (service.xray,):
+            for core in (service.xray,) if config.VLESS else ():
                 current = await core.version()
                 try:
                     tag = await latest_tag(session, core.repo)
@@ -702,6 +706,20 @@ def setup(service: Service) -> Router:
     def settings_view() -> tuple[str, InlineKeyboardMarkup]:
         s = service.settings()
         on = lambda key: "вкл" if s.get(key) == "1" else "выкл"  # noqa: E731
+        if not config.VLESS:  # AmneziaWG only: nothing about VLESS/XHTTP/Reality
+            text = (f"<b>Настройки</b>\n\n"
+                    f"Адрес сервера: <code>{html.escape(service.host)}</code>\n"
+                    f"Режим: только AmneziaWG (<code>VLESS=0</code> в .env)\n"
+                    f"Порты: AmneziaWG {config.AWG_PORT}/udp, подписка {config.SUB_PORT}/tcp\n\n"
+                    f"<b>AmneziaWG</b>: {on('awg_enabled')}, подсеть {config.AWG_SUBNET}, порт {config.AWG_PORT}\n"
+                    f"Маскировка новых конфигов: "
+                    f"{'QUIC Initial 1200 байт' if s.get('awg_client_profile', 'quic') == 'quic' else 'как у сервера'}")
+            markup = kb([(f"AmneziaWG: {on('awg_enabled')}", "set:awg"), ("🔑 Новые ключи AWG", "set:awgkey")],
+                        [("Маскировка новых AWG-конфигов: "
+                          + ("QUIC" if s.get("awg_client_profile", "quic") == "quic" else "как у сервера"),
+                          "set:awgprof")],
+                        [("📍 Адрес сервера", "set:host")], BACK)
+            return text, markup
         text = (f"<b>Настройки</b>\n\n"
                 f"Адрес сервера: <code>{html.escape(service.host)}</code>\n"
                 f"Названия ключей: <code>{html.escape(service.remark('XHTTP'))}</code>"
@@ -932,10 +950,13 @@ def setup(service: Service) -> Router:
     @router.callback_query(F.data == "logs")
     async def logs(cb: CallbackQuery) -> None:
         debug = db.get("debug_logs") == "1"
-        await show(cb, "Какие логи показать?\n\nПодробные логи Xray показывают каждое подключение — "
-                       "включите, попробуйте подключиться и откройте нужные логи.",
-                   kb([("Xray", "log:xray"), ("AmneziaWG", "log:amneziawg")],
-                      [(f"🔍 Подробные логи: {'вкл' if debug else 'выкл'}", "debuglogs")], BACK))
+        await show(cb, "Какие логи показать?" + ("\n\nПодробные логи Xray показывают каждое подключение — "
+                                                 "включите, попробуйте подключиться и откройте нужные логи."
+                                                 if config.VLESS else ""),
+                   kb([("Xray", "log:xray"), ("AmneziaWG", "log:amneziawg")] if config.VLESS else
+                      [("AmneziaWG", "log:amneziawg")],
+                      [(f"🔍 Подробные логи: {'вкл' if debug else 'выкл'}", "debuglogs")] if config.VLESS else [],
+                      BACK))
 
     @router.callback_query(F.data == "debuglogs")
     async def toggle_debug_logs(cb: CallbackQuery) -> None:

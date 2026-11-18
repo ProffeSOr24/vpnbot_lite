@@ -28,6 +28,7 @@ jobs:
           pip install -q -r requirements.txt pyflakes
           python -m pyflakes app tests
           python tests/startup_test.py
+          VLESS=0 python tests/startup_test.py   # AmneziaWG-only mode starts too, without Xray
 
       - name: Image name
         id: image

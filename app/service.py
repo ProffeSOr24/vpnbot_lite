@@ -108,7 +108,9 @@ PROTOS = {"both": "🔗📡 VLESS + AmneziaWG", "vless": "🔗 только VLES
 
 
 def uses(user, proto: str) -> bool:
-    """Does the user get VLESS ("vless") or AmneziaWG ("awg")?"""
+    """Does the user get VLESS ("vless") or AmneziaWG ("awg")? With VLESS=0 everyone gets AmneziaWG only."""
+    if not config.VLESS:
+        return proto == "awg"
     kind = user["proto"] if "proto" in user.keys() else "both"
     return kind in ("both", proto)
 
@@ -289,8 +291,24 @@ class Service:
         return ip
 
     # --- reachability ---
+    def _sub_port(self) -> int:
+        """The public port of the subscription links, or 0 when they live on another host."""
+        if config.SUB_URL:
+            u = urlsplit(config.SUB_URL)
+            return (u.port or (443 if u.scheme == "https" else 80)) if u.hostname == self.host else 0
+        return config.SUB_PORT
+
+    def reach_port(self) -> int:
+        """What the watcher connects to: the VPN port; with VLESS=0 the public site (443) or the subscriptions."""
+        if config.VLESS:
+            return config.XHTTP_PORT or config.XRAY_PORT
+        return config.DECOY_PORT if config.DECOY_BIND != "127.0.0.1" else self._sub_port()
+
     def _alt_port(self, port: int) -> int:
         """Another port the server surely listens on — tells «the whole IP is blocked» from «one port is»."""
+        if not config.VLESS:
+            sub = self._sub_port()
+            return sub if sub != port else 0
         if config.XRAY_PORT and config.XRAY_PORT != port:
             return config.XRAY_PORT  # the REALITY TCP inbound always listens (with no clients it is the decoy)
         if config.SUB_URL:
@@ -302,7 +320,7 @@ class Service:
 
     async def check_reach(self, session: aiohttp.ClientSession) -> dict:
         """Reachability of the VPN port from Russia, with the diagnosis and the entry/exit IPs."""
-        port = config.XHTTP_PORT or config.XRAY_PORT
+        port = self.reach_port()
         host = self.host
         try:
             ipaddress.ip_address(host)
@@ -315,7 +333,10 @@ class Service:
                 except OSError:
                     entry = ""
         exit_ip = await watch.public_ip(session) or ""
-        return await self.reach.check(session, host, port, alt_port=self._alt_port(port), sni=bool(self.self_sni),
+        # TLS with the name: REALITY on our own domain, or (VLESS=0) Caddy's site/subscriptions with a real certificate
+        sni = bool(self.self_sni) if config.VLESS else (
+            entry != host and (config.DECOY_BIND != "127.0.0.1" or config.SUB_URL.startswith("https://")))
+        return await self.reach.check(session, host, port, alt_port=self._alt_port(port), sni=sni,
                                       entry_ip=entry, exit_ip=exit_ip, old_ip=self.db.get("ddns_old_ip") or "",
                                       changed_at=int(self.db.get("ddns_changed_ts") or 0))
 
@@ -398,12 +419,15 @@ class Service:
             await self.collect_stats()
             users = [u for u in self.db.users(only_enabled=True) if uses(u, "vless")]
             s = self.settings()
-            self.xray.write_config(users, s)
-            error = await self.xray.check_config()
-            if error:
-                log.error("xray config error: %s", error)
-                return f"Xray: {error}"
-            await self.xray.restart()
+            if config.VLESS:
+                self.xray.write_config(users, s)
+                error = await self.xray.check_config()
+                if error:
+                    log.error("xray config error: %s", error)
+                    return f"Xray: {error}"
+                await self.xray.restart()
+            else:
+                await self.xray.stop()  # VLESS=0: AmneziaWG only, port 443 belongs to the notes site (Caddy)
             try:
                 self.db.ensure_awg(config.AWG_SUBNET)
                 users = [u for u in self.db.users(only_enabled=True) if uses(u, "awg")]

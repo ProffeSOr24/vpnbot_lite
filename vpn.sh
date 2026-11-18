@@ -11,6 +11,7 @@
 #   ./vpn.sh cleanup                          освободить место: старые образы Docker, журнал, кэш apt, старые логи
 #   ./vpn.sh doctor                           вся диагностика одним выводом (без секретов) — пришлите его целиком
 #   ./vpn.sh restart | stop | status | logs
+# Только AmneziaWG, без VLESS/XHTTP: VLESS=0 в .env и ./vpn.sh restart (вернуть — удалить строку и restart)
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -55,10 +56,44 @@ EOF
 open_firewall() {
     command -v ufw >/dev/null && ufw status | grep -q "Status: active" || return 0
     log "Открываю порты в ufw"
-    ufw allow "$(env_port XRAY_PORT 443)/tcp"
-    [ "$(env_port XHTTP_PORT 8443)" = 0 ] || ufw allow "$(env_port XHTTP_PORT 8443)/tcp"
+    if [ "$(env_get VLESS)" = 0 ]; then   # AmneziaWG only: no VPN ports over TCP, 443 only for the notes site
+        [ "$(env_port XHTTP_PORT 8443)" = 0 ] || ufw delete allow "$(env_port XHTTP_PORT 8443)/tcp" >/dev/null 2>&1 || true
+        if [ "$(env_get DECOY_BIND)" = 0.0.0.0 ]; then
+            ufw allow "$(env_port DECOY_PORT 443)/tcp"
+        else
+            ufw delete allow "$(env_port XRAY_PORT 443)/tcp" >/dev/null 2>&1 || true
+        fi
+    else
+        ufw allow "$(env_port XRAY_PORT 443)/tcp"
+        [ "$(env_port XHTTP_PORT 8443)" = 0 ] || ufw allow "$(env_port XHTTP_PORT 8443)/tcp"
+    fi
     ufw allow "$(env_port AWG_PORT 51820)/udp"
     ufw allow "$(env_port SUB_PORT 2096)/tcp"
+}
+
+sync_vless() {
+    # VLESS=0 (AmneziaWG only): the bot does not start Xray, so the notes site moves from 127.0.0.1:9443 (behind
+    # REALITY) to the public 443, served by Caddy itself. VLESS back on — the site goes back behind REALITY.
+    if [ "$(env_get VLESS)" = 0 ]; then
+        if [ "$(env_get COMPOSE_PROFILES)" = https ] && [ -n "$(env_get SUB_DOMAIN)" ] \
+            && [ "$(env_get DECOY_BIND)" != 0.0.0.0 ]; then
+            env_set VLESS_OLD_DECOY_PORT "$(env_port DECOY_PORT 9443)"
+            env_set DECOY_PORT 443
+            env_set DECOY_BIND 0.0.0.0
+            log "VLESS выключен: сайт будет открываться на 443 напрямую через Caddy"
+        fi
+    elif [ "$(env_get DECOY_BIND)" = 0.0.0.0 ]; then
+        env_set DECOY_PORT "$(env_port VLESS_OLD_DECOY_PORT 9443)"
+        env_del DECOY_BIND
+        env_del VLESS_OLD_DECOY_PORT
+        log "VLESS снова включён: сайт возвращается за REALITY"
+    fi
+}
+
+cmd_restart() {
+    sync_vless
+    [ "$(id -u)" -ne 0 ] || open_firewall
+    docker compose up -d --force-recreate
 }
 
 version_url() {  # raw-ссылка на VERSION в GitHub, чтобы бот видел новые версии
@@ -217,6 +252,7 @@ EOF
 cmd_stealth() {
     need_root "$@"
     local domain port
+    [ "$(env_get VLESS)" != 0 ] || die "VLESS выключен (VLESS=0 в .env): маскировка нужна только для VLESS"
     if [ "${1:-}" = off ]; then
         env_set SELF_SNI 0
         env_set XRAY_PORT "$(env_port STEALTH_OLD_XRAY_PORT 443)"
@@ -447,6 +483,7 @@ cmd_update() {
         log "Скачиваю новую версию"
         git pull --ff-only
     fi
+    sync_vless
     if [ "$(id -u)" -eq 0 ]; then  # новые версии могут требовать новых портов/настроек ядра
         [ -n "$(env_get AWG_PORT)" ] || env_set AWG_PORT 51820
         tune_kernel
@@ -525,9 +562,9 @@ case "${1:-}" in
     cleanup) cmd_cleanup ;;
     rollback) need_root; cmd_rollback; exit 0 ;;
     import-awg) shift; cmd_import_awg "$@" ;;
-    restart) docker compose up -d --force-recreate ;;  # пересоздать: подхватывает изменения .env
+    restart) cmd_restart ;;  # пересоздать: подхватывает изменения .env (и VLESS=0 — только AmneziaWG)
     stop) docker compose down ;;
     status) docker compose ps ;;
     logs) docker compose logs -f --tail=200 ;;
-    *) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+    *) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

@@ -46,8 +46,10 @@
 # The site REALITY shows to everyone who isn't a client (DPI probes, browsers) when SELF_SNI=1:
 # Xray on 443 forwards such connections here, so the server looks like an ordinary personal site.
 # The second address catches visits by IP: they get the same site (certificate via default_sni).
+# With VLESS=0 there is no Xray: `./vpn.sh restart` sets DECOY_PORT=443 and DECOY_BIND=0.0.0.0, and the site is
+# served on 443 directly.
 {$SUB_DOMAIN}:{$DECOY_PORT:9443}, https://:{$DECOY_PORT:9443} {
-	bind 127.0.0.1
+	bind {$DECOY_BIND:127.0.0.1}
 	import notes
 	import not_found
 }
