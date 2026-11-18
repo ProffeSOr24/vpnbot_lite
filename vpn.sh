@@ -7,7 +7,6 @@
 #   ./vpn.sh ddns ИМЯ ТОКЕН [IP]              свой адрес ИМЯ.duckdns.org вместо IP — при смене IP устройства менять не нужно
 #   ./vpn.sh stealth [off]                    максимальная маскировка: VLESS на 443/8443, SNI = свой домен, сайт-приманка
 #   ./vpn.sh https-cert CERT KEY              подписки по https с готовым сертификатом
-#   ./vpn.sh import-awg wg0|wg1 [--apply]     перенести существующий AmneziaWG (без --apply — только проверка)
 #   ./vpn.sh cleanup                          освободить место: старые образы Docker, журнал, кэш apt, старые логи
 #   ./vpn.sh doctor                           вся диагностика одним выводом (без секретов) — пришлите его целиком
 #   ./vpn.sh restart | stop | status | logs
@@ -566,5 +565,5 @@ case "${1:-}" in
     stop) docker compose down ;;
     status) docker compose ps ;;
     logs) docker compose logs -f --tail=200 ;;
-    *) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+    *) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac
