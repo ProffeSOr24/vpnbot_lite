@@ -3,7 +3,7 @@
 ## Готово
 - [x] VLESS Reality и VLESS XHTTP, подписки по https для Happ, v2RayTun, Hiddify, v2rayN.
 - [x] AmneziaWG 2.0 для роутеров и телефонов; новые конфиги маскируются под QUIC (HTTP/3).
-- [x] Перенос AmneziaWG с mercurykd/vpnbot без перенастройки роутеров (`./vpn.sh import-awg`).
+- [x] Перенос существующего AmneziaWG без перенастройки роутеров (`./vpn.sh import-awg`).
 - [x] Свой домен DuckDNS вместо IP: при смене IP роутеры и AmneziaWG переподключаются сами (`./vpn.sh ddns`).
 - [x] Сторож доступности из России (check-host.net) с уведомлением админу.
 - [x] Маскировка под свой сайт: Reality на 443/8443, SNI = свой домен, посторонним — сайт с настоящим сертификатом (`./vpn.sh stealth`).

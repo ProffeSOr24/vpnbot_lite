@@ -63,7 +63,6 @@ cd /opt/vpnbot-lite
 ./vpn.sh rollback    # вернуть предыдущую версию
 ./vpn.sh doctor      # диагностика без секретов
 ./vpn.sh cleanup     # освободить диск
-./vpn.sh import-awg wg0 [--apply]   # перенести AmneziaWG с mercurykd/vpnbot
 ```
 
 Свои настройки — только в `.env` (обновления его не трогают), после правки — `./vpn.sh restart`. Файлы репозитория руками не меняйте: иначе обновление не пройдёт.
