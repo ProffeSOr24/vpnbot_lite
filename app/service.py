@@ -20,7 +20,7 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from . import watch
 from .watch import Reachability
 from . import config
-from .cores import AWG_PARAMS, XHTTP_CLIENT, XHTTP_CLIENT_TUNED, AmneziaWG, Xray, awg_client_lines, awg_param_lines
+from .cores import AWG_MTU, AWG_PARAMS, XHTTP_CLIENT, XHTTP_CLIENT_TUNED, AmneziaWG, Xray, awg_client_lines, awg_param_lines
 from .db import DB, wg_keypair
 
 log = logging.getLogger(__name__)
@@ -399,7 +399,9 @@ class Service:
         params = [line for line in awg_param_lines(s) if not line.startswith(("I1 ", "I2 ", "I3 ", "I4 ", "I5 "))] \
             if router else awg_client_lines(s)
         lines = ["[Interface]", f"PrivateKey = {user['awg_private']}", f"Address = {user['awg_ip']}/32",
-                 f"DNS = {config.AWG_DNS}", *params,
+                 f"DNS = {config.AWG_DNS}",
+                 # apps: the same packet size as the server; routers set their own MTU (Keenetic: 1324–1350)
+                 *([] if router else [f"MTU = {AWG_MTU}"]), *params,
                  "", "[Peer]", f"PublicKey = {s['awg_public']}",
                  *([f"PresharedKey = {user['awg_psk']}"] if user["awg_psk"] else []),
                  f"Endpoint = {self._host_for_url()}:{config.AWG_PORT}",

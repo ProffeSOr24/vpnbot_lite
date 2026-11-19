@@ -490,7 +490,7 @@ class AmneziaWG(Core):
         steps = [
             [self.awg, "setconf", config.AWG_IFACE, str(self.config_path)],
             ["ip", "address", "replace", f"{next(net.hosts())}/{net.prefixlen}", "dev", config.AWG_IFACE],
-            ["ip", "link", "set", "dev", config.AWG_IFACE, "mtu", "1420", "up"],
+            ["ip", "link", "set", "dev", config.AWG_IFACE, "mtu", str(AWG_MTU), "up"],
         ]
         for table, chain, spec in self._rules():
             if (await run("iptables", "-t", table, "-C", chain, *spec))[0] != 0:
@@ -556,6 +556,11 @@ XHTTP_CLIENT = {"xPaddingBytes": "100-1000", "noGRPCHeader": False, "scMaxEachPo
 # as streams grow — a burst of TLS handshakes to one name is reportedly one of the things TSPU freezes for ~2 minutes
 XHTTP_CLIENT_TUNED = {**XHTTP_CLIENT, "xmux": {"maxConnections": 2, "cMaxReuseTimes": 0, "hMaxRequestTimes": "600-900",
                                                "hMaxReusableSecs": "1800-3000", "hKeepAlivePeriod": 0}}
+
+# Tunnel MTU. Plain WireGuard uses 1420, but AmneziaWG 2.0 pads every data packet by S4 (up to 32 bytes):
+# 1420 + 32 (WireGuard) + S4 + 28 (UDP/IPv4) > 1500, and such packets are dropped ("sendmmsg: message too long").
+# 1380 fits with the largest padding even over IPv6.
+AWG_MTU = 1380
 
 # AmneziaWG 1.0: Jc/Jmin/Jmax/S1/S2/H1-H4; 2.0 adds S3/S4 padding and I1-I5 signature packets
 AWG_PARAMS = ("Jc", "Jmin", "Jmax", "S1", "S2", "S3", "S4", "H1", "H2", "H3", "H4", "I1", "I2", "I3", "I4", "I5")
