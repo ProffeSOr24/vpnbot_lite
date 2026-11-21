@@ -964,12 +964,18 @@ def setup(service: Service) -> Router:
         await apply(cb)
         await logs(cb)
 
-    @router.callback_query(F.data.startswith("log:"))
+    @router.callback_query(F.data.startswith(("log:", "refresh_log:")))
     async def show_logs(cb: CallbackQuery) -> None:
-        core = core_by_name(cb.data.split(":")[1])
+        action, name = cb.data.split(":", 1)
+        core = core_by_name(name)
         text = "\n".join(list(core.logs)[-40:]) or "пусто"
-        await cb.message.answer(f"<b>{core.name}</b>\n<pre>{html.escape(text[-3800:])}</pre>")
-        await cb.answer()
+        body = f"<b>{core.name}</b>\n<pre>{html.escape(text[-3800:])}</pre>"
+        markup = kb([("🔄 Обновить логи", f"refresh_log:{name}")])
+        if action == "log":
+            await cb.message.answer(body, reply_markup=markup)
+            await cb.answer()
+        else:
+            await show(cb, body, markup)
 
     return router
 
