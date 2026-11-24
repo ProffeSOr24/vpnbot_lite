@@ -18,6 +18,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
 from . import watch
+from .speed import SpeedMonitor
 from .watch import Reachability
 from . import config
 from .cores import AWG_MTU, AWG_PARAMS, XHTTP_CLIENT, XHTTP_CLIENT_TUNED, AmneziaWG, Xray, awg_client_lines, awg_param_lines
@@ -121,6 +122,7 @@ class Service:
         self.xray = Xray()
         self.awg = AmneziaWG()
         self.reach = Reachability()
+        self.speed = SpeedMonitor(self.db)
         self._apply_lock = asyncio.Lock()
 
     # --- settings ---
