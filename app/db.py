@@ -192,7 +192,7 @@ class DB:
         target.close()
 
     # settings that change by themselves (timestamps, last results): not a reason for a new backup
-    VOLATILE = {"speed_last", "speed_schedule", "autoupdate_check", "autoupdate_day", "autoupdate_pending", "autoupdate_seen", "bot_version",
+    VOLATILE = {"autoupdate_check", "autoupdate_day", "autoupdate_pending", "autoupdate_seen", "bot_version",
                 "ddns_ip", "disk_alert_ts", "disk_clean_ts", "night_guard", "report_week", "watch_last", "exit_same",
                 "ddns_old_ip", "ddns_changed_ts", "watch_state", "backup_fp", "backup_ts"}
     USER_VOLATILE = {"up", "down", "last_seen", "online_since", "last_via", "last_ip"}

@@ -109,21 +109,10 @@ async def keep_reachable(service: Service, bot: Bot) -> None:
                     else:
                         pending = None
                         service.db.set("watch_state", state)
-                        await notify(bot, watch.describe(result, service.host, port) + "\n\n" + service.speed.describe())
+                        await notify(bot, watch.describe(result, service.host, port))
             except Exception:  # noqa: BLE001 - the loop must survive
                 log.exception("reachability job failed")
             await asyncio.sleep(300)
-
-
-async def monitor_speed(service: Service, bot: Bot) -> None:
-    while True:
-        try:
-            note = await service.speed.tick()
-            if note:
-                await notify(bot, note)
-        except Exception:
-            log.exception("Cloudflare speed monitor failed")
-        await asyncio.sleep(30)
 
 
 async def watch_disk(service: Service, bot: Bot) -> None:
@@ -371,15 +360,12 @@ async def main() -> None:
     # a webhook left by another bot on the same token (e.g. the old vpnbot) blocks polling
     await bot.delete_webhook(drop_pending_updates=False)
     task = asyncio.create_task(background(service, bot, ssl_ctx))
-    speed_task = asyncio.create_task(monitor_speed(service, bot))
     reach_task = asyncio.create_task(keep_reachable(service, bot))
     try:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:
         task.cancel()
         reach_task.cancel()
-        speed_task.cancel()
-        await asyncio.gather(speed_task, return_exceptions=True)
         await service.collect_stats()
         await service.xray.stop()
         await service.awg.stop()

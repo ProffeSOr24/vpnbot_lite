@@ -503,12 +503,9 @@ def setup(service: Service) -> Router:
         if last.get("state"):
             text += (f"\n📡 {watch.STATE_TEXT.get(last['state'], last['state'])}"
                      f" (проверено {time.strftime('%d.%m %H:%M', time.localtime(last.get('time', 0)))})")
-        text += "\n" + service.speed.describe()
         watch_on = db.get("watch_enabled", "1") == "1"
         await show(cb, text, kb([("🔄 Обновить", "server"), ("♻️ Перезапуск ядер", "restart")],
                                 [("📡 Доступность из РФ", "reach"), ("🧹 Очистить диск", "cleanup")],
-                                [("⚡ Измерить сейчас", "speed_now"),
-                                 (f"Замеры каждые 6 ч: {'вкл' if service.speed.enabled else 'выкл'}", "speed_toggle")],
                                 [("📋 Сводка за неделю", "report")],
                                 [(f"🧹 Автоочистка при ≥{db.get('disk_threshold', '80')}%: "
                                   f"{'вкл' if db.get('disk_autoclean', '1') == '1' else 'выкл'}", "cleanup_auto")],
@@ -523,26 +520,7 @@ def setup(service: Service) -> Router:
         if result["state"] != "error" and not (result.get("dc_only") and result["state"] == "ok"):
             db.set("watch_last", json.dumps(result))
             db.set("watch_state", result["state"])
-        await cb.message.answer(watch.describe(result, service.host, port) + "\n\n" + service.speed.describe(),
-                                reply_markup=kb([("⚡ Измерить сейчас", "speed_now"), ("📊 Сервер", "server")]))
-
-    @router.callback_query(F.data == "speed_now")
-    async def speed_now(cb: CallbackQuery) -> None:
-        if service.speed.lock.locked():
-            await cb.answer("Замер уже идёт")
-            return
-        async with service.speed.lock:
-            await cb.answer("Измеряю скорость до Cloudflare…")
-            await service.speed.sample()
-            await cb.message.answer(service.speed.describe(), reply_markup=kb([("📊 Сервер", "server")]))
-
-    @router.callback_query(F.data == "speed_toggle")
-    async def speed_toggle(cb: CallbackQuery) -> None:
-        if service.speed.lock.locked():
-            await cb.answer("Дождитесь окончания текущего замера")
-            return
-        service.speed.toggle()
-        await server(cb)
+        await cb.message.answer(watch.describe(result, service.host, port), reply_markup=kb([("📊 Сервер", "server")]))
 
     def report_kb() -> InlineKeyboardMarkup:
         on = db.get("report_enabled", "1") == "1"
